@@ -17,9 +17,6 @@
     BROWSER = "zen";
     TERMINAL = "kitty";
 
-    # Package Managers
-    PNPM_HOME = "$HOME/.local/share/pnpm";
-
     # Virtualization
     LIBVIRT_DEFAULT_URI = "qemu:///system";
   };
@@ -27,7 +24,6 @@
   # User PATH
   home.sessionPath = [
     "$HOME/.local/bin"
-    "$HOME/.local/share/pnpm"
   ];
 
   # Direnv
