@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import "../components" as Components
 import "../core" as Core
@@ -195,9 +194,9 @@ Components.LauncherView {
                         radius: Core.Theme.radiusSmall
 
                         // The zoom you actually see in a list: the miniature
-                        // pushes forward while the row itself only lifts. It is
-                        // also the one part of the row that is a picture, which
-                        // is what makes scaling it read as focus.
+                        // pushes forward on its own. It is also the one part
+                        // of the row that is a picture, which is what makes
+                        // scaling it read as focus.
                         scale: row.selected ? 1.18 : 1.0
 
                         Behavior on scale {

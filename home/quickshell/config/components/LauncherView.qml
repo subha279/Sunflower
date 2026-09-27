@@ -268,8 +268,6 @@ Item {
 
                 width: root.iconSlot
 
-                horizontalAlignment: Text.AlignLeft
-
                 elide: Text.ElideRight
 
                 text: root.promptIcon
