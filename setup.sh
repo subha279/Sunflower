@@ -1792,6 +1792,7 @@ CI_ROOT_PART=""
 CI_USER=""
 CI_DEST=""
 CI_EXPECT_HOSTNAME=""
+CI_VERIFY_AS_ROOT=1 # verify-boot re-ran as root; 0 downgrades device checks
 CI_USER_UID=""
 CI_USER_GID=""
 CI_SYSTEM_PATH=""
@@ -3755,8 +3756,16 @@ ci_verify_hardware() {
     want_root="$(ci_blkid_uuid "$CI_ROOT_PART")"
     got_root="$(ci_fs_uuid "$f" "/")"
 
-    if [[ -n "$want_root" && "$got_root" == "$want_root" ]]; then
-        v_ok "root UUID matches $CI_ROOT_PART  ($want_root)"
+    if [[ -n "$want_root" ]]; then
+        if [[ "$got_root" == "$want_root" ]]; then
+            v_ok "root UUID matches $CI_ROOT_PART  ($want_root)"
+        else
+            v_fail "root UUID mismatch: config=${got_root:-none} target=${want_root:-unknown}"
+        fi
+    elif [[ "$CI_VERIFY_AS_ROOT" -eq 0 ]]; then
+        # blkid was denied, not the disk broken: say so instead of failing
+        # the install over a permission problem.
+        v_info "root UUID not compared: blkid needs root (sudo $0 verify-boot)"
     else
         v_fail "root UUID mismatch: config=${got_root:-none} target=${want_root:-unknown}"
     fi
@@ -3771,8 +3780,14 @@ ci_verify_hardware() {
         want_boot="$(ci_blkid_uuid "$CI_ESP")"
         got_boot="$(ci_fs_uuid "$f" "/boot")"
 
-        if [[ -n "$want_boot" && "$got_boot" == "$want_boot" ]]; then
-            v_ok "boot UUID matches $CI_ESP  ($want_boot)"
+        if [[ -n "$want_boot" ]]; then
+            if [[ "$got_boot" == "$want_boot" ]]; then
+                v_ok "boot UUID matches $CI_ESP  ($want_boot)"
+            else
+                v_fail "boot UUID mismatch: config=${got_boot:-none} target=${want_boot:-unknown}"
+            fi
+        elif [[ "$CI_VERIFY_AS_ROOT" -eq 0 ]]; then
+            v_info "boot UUID not compared: blkid needs root (sudo $0 verify-boot)"
         else
             v_fail "boot UUID mismatch: config=${got_boot:-none} target=${want_boot:-unknown}"
         fi
@@ -4210,7 +4225,19 @@ ci_handle_stale_efi() {
     done < <(printf '%s\n' "$out" | ci_parse_stale_efi)
 
     if [[ "${#stale[@]}" -eq 0 ]]; then
-        v_ok "no stale systemd-boot entry in NVRAM"
+        if [[ -z "$out" && "$CI_VERIFY_AS_ROOT" -eq 0 ]]; then
+            v_info "EFI entries could not be read without root (sudo $0 verify-boot)"
+        else
+            v_ok "no stale systemd-boot entry in NVRAM"
+        fi
+        return 0
+    fi
+
+    if [[ "$CI_VERIFY_AS_ROOT" -eq 0 ]]; then
+        local plural="entries"
+        [[ "${#stale[@]}" -eq 1 ]] && plural="entry"
+        v_info "${#stale[@]} stale systemd-boot $plural found, but they can only be"
+        v_info "deleted as root: sudo $0 verify-boot"
         return 0
     fi
 
@@ -4249,6 +4276,76 @@ ci_handle_stale_efi() {
 
     success "Stale entries removed."
     printf '%s\n' "$out" | sed 's/^/    /'
+}
+
+# Resolve a path under $CI_TARGET the way the INSTALLED system resolves it.
+# NixOS makes /etc/hostname, /etc/hosts and friends symlinks with absolute
+# targets (/etc/static/hostname, which is itself a symlink into /nix/store);
+# read from outside the chroot those fall through into the LIVE system, so a
+# live-ISO session comparing against $CI_TARGET/etc/hostname ends up reading
+# the installer's own hostname and calling the install wrong. Every component
+# is therefore resolved with absolute targets re-rooted under $CI_TARGET,
+# restarting the walk whenever a link is followed, since the new path's own
+# parents may be links too. Prints nothing when the chain cannot be resolved
+# to a regular file.
+ci_target_path() {
+    local p="$1" i=0 cur rest part link jumped
+
+    case "$p" in
+    "$CI_TARGET"/*) ;;
+    *) return 1 ;;
+    esac
+
+    while ((i < 32)); do
+        i=$((i + 1))
+        cur="$CI_TARGET"
+        rest="${p#"$CI_TARGET"}"
+        rest="${rest#/}"
+        jumped=0
+
+        while [[ -n "$rest" ]]; do
+            part="${rest%%/*}"
+            if [[ "$part" == "$rest" ]]; then
+                rest=""
+            else
+                rest="${rest#*/}"
+            fi
+            [[ -n "$part" && "$part" != "." ]] || continue
+
+            if [[ "$part" == ".." ]]; then
+                cur="${cur%/*}"
+                [[ -n "$cur" ]] || cur="$CI_TARGET"
+                continue
+            fi
+
+            cur="${cur%/}/$part"
+            if [[ -L "$cur" ]]; then
+                link="$(readlink "$cur" 2>/dev/null || printf '')"
+                [[ -n "$link" ]] || return 1
+                case "$link" in
+                /*) p="$CI_TARGET$link" ;;
+                *) p="${cur%/*}/$link" ;;
+                esac
+                [[ -z "$rest" ]] || p="$p/$rest"
+                jumped=1
+                break
+            fi
+            [[ -e "$cur" ]] || return 1
+        done
+
+        if [[ "$jumped" -eq 0 ]]; then
+            [[ -f "$cur" ]] || return 1
+            printf '%s' "$cur"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ci_target_read() {
+    local p
+    p="$(ci_target_path "$1")" || return 1
+    cat "$p"
 }
 
 # What the target actually carries, for the hints below. A failed check is
@@ -4339,12 +4436,18 @@ ci_final_verify() {
     fi
 
     local got_host
-    got_host="$(cat "$CI_TARGET/etc/hostname" 2>/dev/null || true)"
+    # Resolved through the target, not through this shell: /etc/hostname is a
+    # symlink to an absolute path, which a plain cat follows into the live
+    # system and reads the installer ISO's own hostname.
+    got_host="$(ci_target_read "$CI_TARGET/etc/hostname" 2>/dev/null || true)"
+    got_host="${got_host//[[:space:]]/}"
     if [[ -n "$CI_EXPECT_HOSTNAME" ]]; then
         if [[ "$got_host" == "$CI_EXPECT_HOSTNAME" ]]; then
             v_ok "hostname is $got_host"
         else
             v_fail "hostname is '${got_host:-<none>}', expected $CI_EXPECT_HOSTNAME"
+            v_info "the installed hostname comes from networking.hostName in the flake;"
+            v_info "to change it, edit lib/variables.nix and run ./setup.sh rebuild"
         fi
     else
         v_info "hostname not compared: the target carries no lib/variables.nix to read it from"
@@ -4796,6 +4899,36 @@ free_space() {
     success "Cleanup complete."
 }
 
+# blkid, efibootmgr and the NVRAM cleanup read devices and firmware state an
+# unprivileged user cannot see; without root those checks would report a
+# permission problem as a mismatched disk. Prefer re-running through
+# passwordless sudo, and otherwise carry on with the checks downgraded.
+verify_require_root() {
+    if [[ "$EUID" -eq 0 ]]; then
+        CI_VERIFY_AS_ROOT=1
+        return 0
+    fi
+
+    if command -v sudo >/dev/null 2>&1 &&
+        [[ -z "${SUNFLOWER_SUDO_REEXEC:-}" ]] &&
+        sudo -n true 2>/dev/null; then
+        info "Re-running verify-boot as root through passwordless sudo."
+        SUNFLOWER_SUDO_REEXEC=1
+        export SUNFLOWER_SUDO_REEXEC
+        if [[ ${#SETUP_ARGS[@]} -gt 0 ]]; then
+            exec sudo -E -- "$0" "${SETUP_ARGS[@]}"
+        else
+            exec sudo -E -- "$0" verify-boot
+        fi
+    fi
+
+    CI_VERIFY_AS_ROOT=0
+    warning "Not running as root: disk UUIDs and EFI entries cannot be read."
+    info "Re-run as:  sudo $0 verify-boot   to check those as well."
+    echo
+    return 0
+}
+
 # Re-run the post-install verification against whatever is mounted at /mnt.
 # Shared by the menu and the CLI so there is one copy. Re-derives every input
 # the verifier reads from the target itself, so it works standalone -- no
@@ -4806,6 +4939,8 @@ verify_boot() {
         info "Mount the installed system first, e.g. mount /dev/<root-part> $CI_TARGET"
         return 1
     fi
+
+    verify_require_root
 
     ci_firmware_detect
 
