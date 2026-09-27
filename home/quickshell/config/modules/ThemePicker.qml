@@ -17,6 +17,10 @@ Components.LauncherView {
     cardWidth: 460
     rowHeight: 60
 
+    readonly property int chipWidth: 52
+
+    textColumn: rowInset + rowPadding + chipWidth + rowPadding
+
     columns: 1
 
     // Selection only, same as the wallpaper picker: the wheel and h/j/k/l move
@@ -73,9 +77,20 @@ Components.LauncherView {
             spacing: 4
             interactive: false
 
-            highlightRangeMode: ListView.ApplyRange
-            preferredHighlightBegin: 56
-            preferredHighlightEnd: height - 56
+            highlightRangeMode: ListView.NoHighlightRange
+
+            Behavior on contentY {
+                NumberAnimation {
+                    duration: Core.Theme.durFast
+                    easing.type: Easing.OutQuint
+                }
+            }
+
+            Component.onCompleted: launcher.registerView(list)
+            Component.onDestruction: launcher.registerView(null)
+
+            onContentHeightChanged: launcher.keepInView()
+            onHeightChanged: launcher.keepInView()
 
             Text {
                 anchors.centerIn: parent
@@ -93,17 +108,15 @@ Components.LauncherView {
                 required property var modelData
                 required property int index
 
-                // Inset from the list, which is the whole reason the zoom is
-                // safe: a full-bleed row has nowhere to grow into, so scaling it
-                // up ran it off both edges and the clip shaved it flat. 12px of
-                // gutter against the 6.5px the row gains at 1.03.
+                // Inset 12px from the list so the rows land on the same
+                // column as every other launcher: rows start at 12, the chip
+                // sits on the 22 icon column, the names on the 84 text column.
                 //
                 // The inset has to come from a transform, not from x. A vertical
                 // ListView positions its delegates itself and assigns x = 0 on
                 // every layout pass, which overwrites an x binding here and
-                // leaves the row narrow but still hugging the left edge, with
-                // its scaled edge and its accent bar clipped away. A Translate
-                // is applied on top of the view's positioning, so it survives.
+                // leaves the row hugging the left edge. A Translate is applied
+                // on top of the view's positioning, so it survives.
                 width: list.width - 24
 
                 transform: Translate {
@@ -117,22 +130,6 @@ Components.LauncherView {
 
                 readonly property bool selected: row.index === launcher.selectedIndex
                 readonly property bool isActive: row.modelData.id === Services.ThemeService.activeId
-
-                // The selected row grows past its slot, so it paints over its
-                // neighbours.
-                z: row.selected ? 2 : 0
-
-                // Zoom on selection, kept small on purpose: the row is nearly
-                // card-wide, so a few percent is already a lot of travel. The
-                // miniature below carries the rest of it.
-                scale: row.selected ? 1.03 : 1.0
-
-                Behavior on scale {
-                    NumberAnimation {
-                        duration: 240
-                        easing.type: Easing.OutQuint
-                    }
-                }
 
                 // A partially generated themes.json must not break layout, so every read has a fallback.
                 readonly property var palette: row.modelData.colors || ({})
@@ -193,7 +190,7 @@ Components.LauncherView {
 
                         anchors.verticalCenter: parent.verticalCenter
 
-                        width: 52
+                        width: launcher.chipWidth
                         height: 34
                         radius: Core.Theme.radiusSmall
 

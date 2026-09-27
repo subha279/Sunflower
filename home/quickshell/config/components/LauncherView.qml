@@ -47,6 +47,22 @@ Item {
 
     property int cellHeight: 0
 
+    // One grid for the header and for every row, so the prompt, the query and
+    // the result text land on the same two columns.
+    readonly property int rowInset: Core.Theme.padding + 2
+    readonly property int rowPadding: Core.Theme.padding
+    readonly property int iconSlot: 22
+    readonly property int iconColumn: root.rowInset + root.rowPadding
+
+    // Where the result text starts. The query is anchored to it, so a picker
+    // whose rows lead with a wider element overrides it.
+    property int textColumn: root.iconColumn + root.iconSlot + root.rowPadding
+
+    // The content view registers itself here so the shared navigation can keep
+    // the selection in frame. ApplyRange could not: it overshot the end of the
+    // list and left half a row cut off at the bottom.
+    property var contentView: null
+
     readonly property int rowExtent: root.columns > 1 ? (root.cellHeight > 0 ? root.cellHeight : Math.round((root.cardWidth / root.columns) * 0.70)) : root.rowHeight
 
     readonly property int listMaxRows: 10
@@ -118,8 +134,43 @@ Item {
 
         root.selectedIndex = Math.max(0, Math.min(root.itemCount - 1, next));
 
+        root.keepInView();
+
         if (root.liveSelect && root.open)
             previewTimer.restart();
+    }
+
+    function registerView(view) {
+        root.contentView = view;
+
+        if (view)
+            root.keepInView();
+    }
+
+    function keepInView() {
+        const view = root.contentView;
+
+        if (!view || root.itemCount <= 0)
+            return;
+
+        const pitch = Math.max(1, root.rowExtent);
+        const itemHeight = Math.max(1, pitch - view.spacing);
+        const margin = 4;
+
+        const top = root.selectedIndex * pitch;
+        const bottom = top + itemHeight;
+
+        let target = view.contentY;
+
+        if (top - margin < target)
+            target = top - margin;
+
+        if (bottom + margin > target + view.height)
+            target = bottom + margin - view.height;
+
+        const limit = Math.max(0, view.contentHeight - view.height);
+
+        view.contentY = Math.max(0, Math.min(limit, target));
     }
 
     function wheelSelect(deltaY) {
@@ -146,11 +197,14 @@ Item {
         if (root.itemCount <= 0) {
             root.selectedIndex = 0;
             root.wheelAccumulator = 0;
+            root.keepInView();
             return;
         }
 
         if (root.selectedIndex >= root.itemCount)
             root.selectedIndex = root.itemCount - 1;
+
+        root.keepInView();
     }
 
     onOpenChanged: {
@@ -208,9 +262,15 @@ Item {
 
                 anchors.left: parent.left
 
-                anchors.leftMargin: Core.Theme.padding + 2
+                anchors.leftMargin: root.iconColumn
 
                 anchors.verticalCenter: parent.verticalCenter
+
+                width: root.iconSlot
+
+                horizontalAlignment: Text.AlignLeft
+
+                elide: Text.ElideRight
 
                 text: root.promptIcon
 
@@ -226,7 +286,7 @@ Item {
 
                 anchors.right: parent.right
 
-                anchors.rightMargin: Core.Theme.padding + 2
+                anchors.rightMargin: root.iconColumn
 
                 anchors.verticalCenter: parent.verticalCenter
 
@@ -296,9 +356,9 @@ Item {
             TextInput {
                 id: input
 
-                anchors.left: prompt.right
+                anchors.left: parent.left
 
-                anchors.leftMargin: Core.Theme.padding
+                anchors.leftMargin: root.textColumn
 
                 anchors.right: counter.left
 
@@ -321,6 +381,7 @@ Item {
                 onTextChanged: {
                     root.selectedIndex = 0;
                     root.wheelAccumulator = 0;
+                    root.keepInView();
                 }
 
                 Text {

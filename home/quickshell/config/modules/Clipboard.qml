@@ -129,11 +129,7 @@ Components.LauncherView {
                 id: list
 
                 anchors.fill: parent
-
-                anchors.leftMargin: 12
-                anchors.rightMargin: 12
-                anchors.topMargin: 12
-                anchors.bottomMargin: 12
+                anchors.margins: clipboard.contentMargins / 2
 
                 model: clipboard.results
 
@@ -145,10 +141,20 @@ Components.LauncherView {
 
                 interactive: false
 
-                highlightRangeMode: ListView.ApplyRange
+                highlightRangeMode: ListView.NoHighlightRange
 
-                preferredHighlightBegin: 40
-                preferredHighlightEnd: height - 40
+                Behavior on contentY {
+                    NumberAnimation {
+                        duration: Core.Theme.durFast
+                        easing.type: Easing.OutQuint
+                    }
+                }
+
+                Component.onCompleted: clipboard.registerView(list)
+                Component.onDestruction: clipboard.registerView(null)
+
+                onContentHeightChanged: clipboard.keepInView()
+                onHeightChanged: clipboard.keepInView()
 
                 Text {
                     anchors.centerIn: parent
@@ -177,17 +183,6 @@ Components.LauncherView {
                     radius: Core.Theme.radiusRow
 
                     color: row.selected ? Core.Theme.surfaceGlass : "transparent"
-
-                    scale: row.selected ? 1.02 : 1.0
-
-                    z: row.selected ? 2 : 0
-
-                    Behavior on scale {
-                        NumberAnimation {
-                            duration: 180
-                            easing.type: Easing.OutQuint
-                        }
-                    }
 
                     Behavior on color {
                         ColorAnimation {
@@ -219,7 +214,7 @@ Components.LauncherView {
 
                     Text {
                         anchors.left: parent.left
-                        anchors.leftMargin: 14
+                        anchors.leftMargin: clipboard.textColumn - clipboard.contentMargins / 2
 
                         anchors.right: deleteButton.left
                         anchors.rightMargin: 8
@@ -241,7 +236,7 @@ Components.LauncherView {
                         id: deleteButton
 
                         anchors.right: parent.right
-                        anchors.rightMargin: 12
+                        anchors.rightMargin: Core.Theme.padding
 
                         anchors.verticalCenter: parent.verticalCenter
 
