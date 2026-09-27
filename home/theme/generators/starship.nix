@@ -18,6 +18,7 @@ let
       scan_timeout = 30
       follow_symlinks = false
       palette = "sunflower"
+
       format = """\
       $directory\
       ''${custom.giturl}\
@@ -77,25 +78,25 @@ let
       command = """
       GIT_REMOTE=$(git remote get-url origin 2>/dev/null)
       case "$GIT_REMOTE" in
-      *github*)
-        echo ""
-        ;;
-      *gitlab*)
-        echo ""
-        ;;
-      *bitbucket*)
-        echo ""
-        ;;
-      *git*)
-        echo ""
-        ;;
-      *)
-        echo ""
-        ;;
+        *github*)
+          echo ""
+          ;;
+        *gitlab*)
+          echo ""
+          ;;
+        *bitbucket*)
+          echo ""
+          ;;
+        *git*)
+          echo ""
+          ;;
+        *)
+          echo ""
+          ;;
       esac
       """
 
-      when = "git rev-parse --is-inside-work-tree 2>/dev/null"
+      when = "git remote get-url origin 2>/dev/null"
       format = "[$output](bold purple) "
       require_repo = true
       ignore_timeout = true
@@ -118,7 +119,7 @@ let
       fi
       """
 
-      when = "git rev-parse --is-inside-work-tree >/dev/null 2>&1"
+      when = """test "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" != "$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)""""
       format = "[$output](bold purple) "
       style = "bold purple"
       require_repo = true
@@ -126,18 +127,18 @@ let
 
       [git_status]
       style = "bold text"
-      format = "[$untracked$staged$modified$renamed$deleted$conflicted$stashed$typechanged$ahead_behind]($style) "
-      untracked = "[?](bold red)"
-      staged = "[+](bold green)"
-      modified = "[!](bold yellow)"
-      renamed = "[󰷫 ](bold blue)"
-      deleted = "[󱂥 ](bold red)"
-      conflicted = "[󰜺 ](bold red)"
-      stashed = "[≡](bold purple)"
-      typechanged = "[ ](bold cyan)"
-      ahead = "[⇡''${count}](bold cyan)"
-      behind = "[⇣''${count}](bold orange)"
-      diverged = "[⇕⇡''${ahead_count}⇣''${behind_count}](bold pink)"
+      format = "[$untracked$staged$modified$renamed$deleted$conflicted$stashed$typechanged$ahead_behind]($style)"
+      untracked = "[?](bold red) "
+      staged = "[+](bold green) "
+      modified = "[!](bold yellow) "
+      renamed = "[󰷫](bold blue) "
+      deleted = "[󱂥](bold red) "
+      conflicted = "[󰜺](bold red) "
+      stashed = "[≡](bold purple) "
+      typechanged = "[ ](bold cyan) "
+      ahead = "[⇡''${count}](bold cyan) "
+      behind = "[⇣''${count}](bold orange) "
+      diverged = "[⇕⇡''${ahead_count}⇣''${behind_count}](bold pink) "
       up_to_date = ""
 
       [package]
@@ -149,12 +150,12 @@ let
       [c]
       symbol = " "
       style = "bold blue"
-      format = "[$symbol( $version)]($style) "
+      format = "[$symbol($version)]($style) "
 
       [python]
       symbol = " "
       style = "bold yellow"
-      format = "[$symbol( $version)]($style) "
+      format = "[$symbol($version)]($style) "
 
       [time]
       disabled = true
@@ -165,7 +166,7 @@ let
       [cmd_duration]
       min_time = 1000
       style = "bold muted"
-      format = "󰔟 [$duration]($style) "
+      format = "[󰔟 $duration]($style) "
 
       [character]
       success_symbol = "[➜](bold purple)"
