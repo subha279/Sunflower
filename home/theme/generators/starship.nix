@@ -79,19 +79,19 @@ let
         GIT_REMOTE=$(git remote get-url origin 2>/dev/null)
         case "$GIT_REMOTE" in
         *github*)
-        echo ""
+        echo " "
         ;;
         *gitlab*)
-        echo ""
+        echo " "
         ;;
         *bitbucket*)
-        echo ""
+        echo " "
         ;;
         *git*)
-        echo ""
+        echo ""
         ;;
         *)
-        echo ""
+        echo " "
         ;;
         esac
 
@@ -133,11 +133,11 @@ let
         untracked = "[?](bold red)"
         staged = "[+](bold green)"
         modified = "[!](bold yellow)"
-        renamed = "[»](bold blue)"
-        deleted = "[-](bold red)"
-        conflicted = "[✖](bold red)"
+        renamed = "[󰷫 ](bold blue)"
+        deleted = "[󱂥 ](bold red)"
+        conflicted = "[󰜺 ](bold red)"
         stashed = "[≡](bold purple)"
-        typechanged = "[󰜄](bold cyan)"
+        typechanged = "[ ](bold cyan)"
         ahead = "[⇡''${count}](bold cyan)"
         behind = "[⇣''${count}](bold orange)"
         diverged = "[⇕⇡''${ahead_count}⇣''${behind_count}](bold pink)"
@@ -155,7 +155,7 @@ let
         format = "[$symbol( $version)]($style) "
 
         [python]
-        symbol = ""
+        symbol = " "
         style = "bold yellow"
         format = "[$symbol( $version)]($style) "
 
