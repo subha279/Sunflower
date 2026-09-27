@@ -7,7 +7,7 @@
   };
 
   system = {
-    hostname = "Subha";
+    hostname = "subha";
     timezone = "Asia/Kolkata";
     locale = "en_US.UTF-8";
   };
