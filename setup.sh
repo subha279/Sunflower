@@ -525,11 +525,19 @@ as_root() {
     if [[ "$EUID" -eq 0 ]]; then "$@"; else sudo "$@"; fi
 }
 
-get_var() {
-    local key="$1"
-    [[ -f "$VARS" ]] || return 1
-    sed -nE "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "$VARS" | head -n1
+# Read `key = "value";` from any variables file.
+#
+# get_var applies it to this checkout. The same parse takes a path because
+# the authority is not always the local file: a system installed under
+# another name must be checked against the identity it was BUILT from, and
+# that lives in the copy on the target.
+vars_get() {
+    local file="$1" key="$2"
+    [[ -f "$file" ]] || return 1
+    sed -nE "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "$file" | head -n1
 }
+
+get_var() { vars_get "$VARS" "$1"; }
 # Rewrite one `key = "value";` in a variables file.
 #
 # sed rather than python3, because this also runs inside the installer ISO
@@ -804,6 +812,21 @@ install_flow() {
     def_email="$(get_var email || true)"
     def_tz="$(get_var timezone || true)"
     def_locale="$(get_var locale || true)"
+
+    # A checkout restored from somewhere else (GitHub, another machine) can
+    # carry an identity with no account on this system at all. The file is
+    # only a set of defaults, so fall back to the account actually running
+    # this pass rather than offer a name that cannot be logged into.
+    # Anything typed at the prompt still wins, and the file is rewritten
+    # either way.
+    if [[ -n "$def_user" ]] && ! id -u "$def_user" >/dev/null 2>&1; then
+        local real_user="${SUDO_USER:-${USER:-}}"
+        if [[ -n "$real_user" ]] && id -u "$real_user" >/dev/null 2>&1; then
+            info "lib/variables.nix names '$def_user', which has no account on this system."
+            info "Defaulting the username to '$real_user'; type another to override."
+            def_user="$real_user"
+        fi
+    fi
 
     local username="${def_user:-${SUDO_USER:-${USER:-}}}" full_name hostname git_user git_email timezone locale
     local nvidia="false" ans=""
@@ -3518,6 +3541,18 @@ ci_apply_identity() {
     fi
 
     success "Identity written to ${vars#"$CI_TARGET"}"
+
+    # The source checkout is deliberately left alone: it is this script's own
+    # tree, possibly a git clone, and its file only supplies defaults for a
+    # FUTURE run. Say out loud when it now disagrees with the machine, so
+    # nobody later assumes the local defaults describe what was installed.
+    local local_user
+    local_user="$(get_var username || printf '')"
+    if [[ -n "$local_user" && "$local_user" != "${CI_ID[username]}" ]]; then
+        info "This checkout's lib/variables.nix still says username '$local_user';"
+        info "the installed system uses '${CI_ID[username]}'. Only ${vars#"$CI_TARGET"}"
+        info "was changed -- verify-boot reads the identity from the target."
+    fi
 }
 
 # On legacy BIOS the repository's UEFI-only GRUB settings are invalid:
@@ -4216,6 +4251,43 @@ ci_handle_stale_efi() {
     printf '%s\n' "$out" | sed 's/^/    /'
 }
 
+# What the target actually carries, for the hints below. A failed check is
+# only actionable next to what IS there: "user subha missing" tells an
+# installer nothing, "... but the target has alice, bob" says at once that
+# the machine was installed under another name.
+ci_target_has_user() {
+    [[ -f "$CI_TARGET/etc/passwd" ]] || return 1
+    awk -F: -v u="$1" '$1 == u { found = 1 } END { exit !found }' \
+        "$CI_TARGET/etc/passwd" 2>/dev/null
+}
+
+ci_target_accounts() {
+    awk -F: '$3 >= 1000 && $3 < 65534 { a[++n] = $1 }
+        END {
+            if (!n) { printf "none"; exit }
+            for (i = 1; i <= n; i++) printf "%s%s", a[i], (i < n ? ", " : "")
+        }' "$CI_TARGET/etc/passwd" 2>/dev/null || printf 'unknown'
+}
+
+ci_target_homes() {
+    local d out=""
+    for d in "$CI_TARGET"/home/*; do
+        [[ -d "$d" ]] || continue
+        out+="${out:+, }$(basename "$d")"
+    done
+    printf '%s' "${out:-none}"
+}
+
+ci_target_checkouts() {
+    local f p out=""
+    for f in "$CI_TARGET"/home/*/*/flake.nix; do
+        [[ -f "$f" ]] || continue
+        p="$(dirname "$f")"
+        out+="${out:+, }${p#"$CI_TARGET"}"
+    done
+    printf '%s' "${out:-none}"
+}
+
 # Everything a wrong install would get wrong, checked against the target.
 # None of these may abort the aggregate: each records into V_FAILED and the
 # verdict prints once at the end, after every group has had its say.
@@ -4274,12 +4346,15 @@ ci_final_verify() {
         else
             v_fail "hostname is '${got_host:-<none>}', expected $CI_EXPECT_HOSTNAME"
         fi
+    else
+        v_info "hostname not compared: the target carries no lib/variables.nix to read it from"
     fi
 
     if grep -qE "^${CI_USER}:" "$CI_TARGET/etc/passwd" 2>/dev/null; then
         v_ok "user $CI_USER exists in the installed /etc/passwd"
     else
         v_fail "user $CI_USER missing from the installed /etc/passwd"
+        v_info "accounts on the target: $(ci_target_accounts)"
     fi
 
     if [[ -d "$CI_TARGET/etc" ]]; then
@@ -4292,12 +4367,14 @@ ci_final_verify() {
         v_ok "$CI_TARGET/home/$CI_USER exists"
     else
         v_fail "$CI_TARGET/home/$CI_USER missing"
+        v_info "homes on the target: $(ci_target_homes)"
     fi
 
     if [[ -f "$CI_DEST/flake.nix" && -d "$CI_DEST/$HOST_DIR" ]]; then
         v_ok "repository present at ${CI_DEST#"$CI_TARGET"}"
     else
         v_fail "repository missing at ${CI_DEST#"$CI_TARGET"}"
+        v_info "repository copies on the target: $(ci_target_checkouts)"
     fi
 
     local owner owner_uid owner_gid
@@ -4732,30 +4809,75 @@ verify_boot() {
 
     ci_firmware_detect
 
-    # Username: local variables.nix if this checkout has one, else any home
-    # directory carrying a repository checkout on the target.
-    CI_USER="$(get_var username || printf '')"
-    if [[ -z "$CI_USER" ]]; then
-        local d
-        for d in "$CI_TARGET"/home/*/"$REPO_NAME"; do
-            [[ -d "$d" ]] || continue
-            CI_USER="$(basename "$(dirname "$d")")"
+    # The identity belongs to the system that is actually mounted, never to
+    # this checkout: a machine installed under another name (a test account,
+    # a second machine, a renamed clone) has to be verified against the name
+    # on disk, or every check fails for a reason that has nothing to do with
+    # the installation.
+    #
+    # Resolution, most authoritative first:
+    #   1. a repository copy on the target -- flake.nix is what the system
+    #      was built from, and the home it sits in is the real one
+    #   2. a home directory whose name is an account the target really has
+    #   3. this checkout's lib/variables.nix
+    #   4. any home directory there is
+    #
+    # The clone is found by flake.nix rather than by $REPO_NAME: anyone may
+    # have named the directory something else.
+    local local_user f d dir_user var_user pick="" first_repo="" home
+    local_user="$(get_var username || printf '')"
+
+    for f in "$CI_TARGET"/home/*/*/flake.nix; do
+        [[ -f "$f" ]] || continue
+        d="$(dirname "$f")"
+        dir_user="$(basename "$(dirname "$d")")"
+        var_user="$(vars_get "$d/lib/variables.nix" username || true)"
+        [[ -n "$first_repo" ]] || first_repo="$d"
+        if ci_target_has_user "${var_user:-$dir_user}" ||
+            ci_target_has_user "$dir_user"; then
+            pick="$d"
             break
+        fi
+    done
+    [[ -n "$pick" ]] || pick="$first_repo"
+
+    if [[ -n "$pick" ]]; then
+        CI_DEST="$pick"
+        dir_user="$(basename "$(dirname "$pick")")"
+        var_user="$(vars_get "$CI_DEST/lib/variables.nix" username || true)"
+        CI_USER="${var_user:-$dir_user}"
+        if [[ -n "$var_user" && "$var_user" != "$dir_user" ]]; then
+            info "The target's lib/variables.nix says '$var_user', but its copy lives"
+            info "in /home/$dir_user; verifying against '$var_user'."
+        fi
+    else
+        CI_USER=""
+        for d in "$CI_TARGET"/home/*; do
+            [[ -d "$d" ]] || continue
+            home="$(basename "$d")"
+            [[ "$home" == "lost+found" ]] && continue
+            if ci_target_has_user "$home"; then
+                CI_USER="$home"
+                break
+            fi
+            [[ -n "$CI_USER" ]] || CI_USER="$home"
         done
+        [[ -n "$CI_USER" ]] || CI_USER="$local_user"
+        CI_DEST="$CI_TARGET/home/$CI_USER/$REPO_NAME"
     fi
+
     if [[ -z "$CI_USER" ]]; then
         error "cannot determine the installed username under $CI_TARGET/home"
+        info "There is no home directory and no repository copy on $CI_TARGET to read it from."
         return 1
     fi
 
-    CI_DEST="$CI_TARGET/home/$CI_USER/$REPO_NAME"
     CI_ROOT_PART="$(findmnt -no SOURCE "$CI_TARGET" 2>/dev/null || printf '')"
     CI_ESP="$(findmnt -no SOURCE "$CI_TARGET/boot" 2>/dev/null || printf '')"
 
     # Expected hostname from the TARGET's variables file (the local copy may
     # not match what was actually installed). Empty skips the comparison.
-    CI_EXPECT_HOSTNAME="$(sed -n 's/^[[:space:]]*hostname[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-        "$CI_DEST/lib/variables.nix" 2>/dev/null | head -n1 || true)"
+    CI_EXPECT_HOSTNAME="$(vars_get "$CI_DEST/lib/variables.nix" hostname || true)"
 
     # Expected owner from the target's own /etc/passwd: home must match the
     # uid the installed system thinks this user has.
@@ -4763,6 +4885,18 @@ verify_boot() {
         "$CI_TARGET/etc/passwd" 2>/dev/null | head -n1 || printf '')"
     CI_USER_GID="$(awk -F: -v u="$CI_USER" '$1 == u { print $4 }' \
         "$CI_TARGET/etc/passwd" 2>/dev/null | head -n1 || printf '')"
+
+    section "Identity on the target"
+    printf '  User       : %s\n' "$CI_USER"
+    printf '  Home       : %s\n' "$CI_TARGET/home/$CI_USER"
+    printf '  Repository : %s\n' "${CI_DEST#"$CI_TARGET"}"
+    printf '  Hostname   : %s\n' "${CI_EXPECT_HOSTNAME:-<not recorded on the target>}"
+    echo
+    if [[ -n "$local_user" && "$local_user" != "$CI_USER" ]]; then
+        info "This checkout's lib/variables.nix says '$local_user'; the mounted system"
+        info "was installed as '$CI_USER'. The target is what gets verified here."
+        echo
+    fi
 
     # No password step ran in this session; the verifier reports it as info.
     CI_PW_ATTEMPTED=0
