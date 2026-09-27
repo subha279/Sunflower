@@ -7,8 +7,35 @@ set -Eeuo pipefail
 # ============================================================
 
 VERSION="2.0"
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# The repository root is derived from the script's own location, symlink
+# included -- never from pwd. The user may run /anywhere/setup.sh from /,
+# from the home directory, from /tmp or from the ISO's own /iso, with a
+# checkout directory named anything, in a path containing spaces, and from
+# an archive that never had a .git directory at all.
+_here="${BASH_SOURCE[0]}"
+if command -v readlink >/dev/null 2>&1; then
+    _resolved="$(readlink -f -- "$_here" 2>/dev/null || true)"
+    if [[ -n "$_resolved" ]]; then _here="$_resolved"; fi
+    unset _resolved
+fi
+ROOT="$(cd -- "$(dirname -- "$_here")" && pwd)"
+unset _here
 VARS="$ROOT/lib/variables.nix"
+
+# The command line as first seen. ci_require_root re-executes the script
+# through a passwordless sudo when needed and has to reproduce it exactly,
+# including the "you came from the menu, land me in the installer" case.
+SETUP_ARGS=("$@")
+
+# Flakes are not enabled by default everywhere this runs -- most importantly
+# on the live installer ISO, where `nix flake check` from the menu and every
+# nix invocation inside nixos-install/nixos-enter would otherwise fail.
+# NIX_CONFIG reaches the whole process tree (those tools shell out to nix
+# themselves), and it is APPENDED so any settings already in the environment
+# -- substituters, access tokens, whatever the session exported -- survive,
+# while this line comes last and therefore decides experimental-features.
+export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG$'\n'}experimental-features = nix-command flakes"
 
 # The flake exposes exactly one system: nixosConfigurations.sunflower, fed
 # by ./hosts/sunflower. Everything that names a system or a host directory
@@ -605,23 +632,34 @@ rebuild() {
 }
 
 update_config() {
-    need_cmd git
     need_cmd nix
     section "Update configuration"
     cd "$ROOT"
-    if [[ -n "$(git status --porcelain)" ]]; then
-        warning "Working tree contains uncommitted changes."
-        git status --short
-        if ! confirm "Continue with update?"; then
-            success "Update cancelled."
-            return 0
+
+    # git is optional: without a usable repository there is nothing to
+    # pull, and the flake lock is updated in place either way. Only where
+    # the new inputs come from differs, not what the update does.
+    if command -v git >/dev/null 2>&1 && [[ -d "$ROOT/.git" ]] &&
+        git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        git config --global --add safe.directory "$ROOT" 2>/dev/null || true
+        if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+            warning "Working tree contains uncommitted changes."
+            git status --short || true
+            if ! confirm "Continue with update?"; then
+                success "Update cancelled."
+                return 0
+            fi
         fi
+        run_cmd "git pull --ff-only"
+        if ! git pull --ff-only; then
+            error "git pull failed (local changes or no network)."
+            return 1
+        fi
+    else
+        warning "No usable git repository here; skipping the pull."
+        info "Flake inputs still update below; the checkout itself stays as it is."
     fi
-    run_cmd "git pull --ff-only"
-    if ! git pull --ff-only; then
-        error "git pull failed (local changes or no network)."
-        return 1
-    fi
+
     run_cmd "nix flake update"
     if ! nix flake update; then
         error "nix flake update failed."
@@ -751,30 +789,68 @@ install_flow() {
         return 0
     fi
 
+    # nix only: this pass never runs git (a checkout without .git must work).
     need_cmd nix
-    need_cmd git
 
     section "NixOS installation / setup"
-    local username="${SUDO_USER:-${USER:-}}" full_name hostname git_user git_email timezone locale
+
+    # Defaults from lib/variables.nix -- the very file this pass rewrites --
+    # with the live session used only when the file has no answer at all.
+    local def_user def_name def_host def_git def_email def_tz def_locale
+    def_user="$(get_var username || true)"
+    def_name="$(get_var name || true)"
+    def_host="$(get_var hostname || true)"
+    def_git="$(get_var gitUser || true)"
+    def_email="$(get_var email || true)"
+    def_tz="$(get_var timezone || true)"
+    def_locale="$(get_var locale || true)"
+
+    local username="${def_user:-${SUDO_USER:-${USER:-}}}" full_name hostname git_user git_email timezone locale
     local nvidia="false" ans=""
 
     read -r -p "  Linux username [$username]: " username
-    username="${username:-${SUDO_USER:-${USER:-}}}"
-    [[ "$username" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || die "Invalid Linux username."
+    username="${username:-${def_user:-${SUDO_USER:-${USER:-}}}}"
+    [[ "$username" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "Invalid Linux username."
+    ci_username_ok "$username" || die "Invalid Linux username."
 
-    read -r -p "  Full name: " full_name
+    read -r -p "  Full name${def_name:+ [$def_name]}: " full_name
+    full_name="${full_name:-$def_name}"
     [[ -n "$full_name" ]] || die "Full name cannot be empty."
 
-    read -r -p "  Hostname [$(hostname -s 2>/dev/null || echo nixos)]: " hostname
-    hostname="${hostname:-$(hostname -s 2>/dev/null || echo nixos)}"
-    [[ "$hostname" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || die "Invalid hostname."
+    # Same normaliser the clean installer uses: RFC 1123 shape, lowercase.
+    def_host="${def_host:-$(hostname -s 2>/dev/null || echo nixos)}"
+    def_host="$(ci_normalize_hostname "$def_host" 2>/dev/null || printf '%s' "$def_host")"
+    read -r -p "  Hostname [$def_host]: " hostname
+    hostname="${hostname:-$def_host}"
+    hostname="$(ci_normalize_hostname "$hostname")" || die "Invalid hostname."
 
-    read -r -p "  Git username: " git_user
-    read -r -p "  Git email: " git_email
-    read -r -p "  Timezone [Asia/Kolkata]: " timezone
-    timezone="${timezone:-Asia/Kolkata}"
-    read -r -p "  Locale [en_US.UTF-8]: " locale
-    locale="${locale:-en_US.UTF-8}"
+    read -r -p "  Git username${def_git:+ [$def_git]}: " git_user
+    git_user="${git_user:-$def_git}"
+    read -r -p "  Git email${def_email:+ [$def_email]}: " git_email
+    git_email="${git_email:-$def_email}"
+    # Empty is legal for git (it only warns when committing); anything
+    # present has to actually look like an address.
+    if [[ -n "$git_email" ]]; then
+        ci_email_ok "$git_email" || die "Invalid git email."
+    fi
+
+    read -r -p "  Timezone [${def_tz:-Asia/Kolkata}]: " timezone
+    timezone="${timezone:-${def_tz:-Asia/Kolkata}}"
+    read -r -p "  Locale [${def_locale:-en_US.UTF-8}]: " locale
+    locale="${locale:-${def_locale:-en_US.UTF-8}}"
+
+    # A timezone zoneinfo does not have becomes a dangling /etc/localtime
+    # at activation. Re-ask; forcing an unknown one through stays possible.
+    local zdir
+    if zdir="$(ci_zoneinfo_dir)"; then
+        while ! [[ -e "$zdir/$timezone" ]]; do
+            warning "Timezone '$timezone' not found in $zdir."
+            read -r -p "  Use it anyway? [y/N]: " ans || die "Aborted."
+            if [[ "$ans" =~ ^[Yy]([Ee][Ss])?$ ]]; then break; fi
+            read -r -p "  Timezone [${def_tz:-Asia/Kolkata}]: " timezone
+            timezone="${timezone:-${def_tz:-Asia/Kolkata}}"
+        done
+    fi
 
     if detect_nvidia; then
         nvidia=true
@@ -851,23 +927,37 @@ install_flow() {
 
 test_install() {
     section "Installer preview"
-    local username="${SUDO_USER:-${USER:-testuser}}" full_name hostname git_user git_email timezone locale
+
+    # Defaults come from lib/variables.nix -- the same file a real run
+    # starts from -- so the preview shows what would actually be written
+    # rather than placeholders that no install ever used. Falling back to
+    # the old literals only when the file itself has no answer.
+    local def_user def_name def_host def_gituser def_email def_tz def_locale
+    def_user="$(get_var username || true)"
+    def_name="$(get_var name || true)"
+    def_host="$(get_var hostname || true)"
+    def_gituser="$(get_var gitUser || true)"
+    def_email="$(get_var email || true)"
+    def_tz="$(get_var timezone || true)"
+    def_locale="$(get_var locale || true)"
+
+    local username="${SUDO_USER:-${USER:-${def_user:-testuser}}}" full_name hostname git_user git_email timezone locale
     # Was "${username:-$SUDO_USER}", which aborts under set -u whenever the
     # script is not run through sudo.
     read -r -p "  Test username [$username]: " username
-    username="${username:-${SUDO_USER:-${USER:-testuser}}}"
-    read -r -p "  Test full name [Test User]: " full_name
-    full_name="${full_name:-Test User}"
-    read -r -p "  Test hostname [nixos-test]: " hostname
-    hostname="${hostname:-nixos-test}"
-    read -r -p "  Test Git username [testuser]: " git_user
-    git_user="${git_user:-testuser}"
-    read -r -p "  Test Git email [test@example.com]: " git_email
-    git_email="${git_email:-test@example.com}"
-    read -r -p "  Test timezone [Asia/Kolkata]: " timezone
-    timezone="${timezone:-Asia/Kolkata}"
-    read -r -p "  Test locale [en_US.UTF-8]: " locale
-    locale="${locale:-en_US.UTF-8}"
+    username="${username:-${SUDO_USER:-${USER:-${def_user:-testuser}}}}"
+    read -r -p "  Test full name [${def_name:-Test User}]: " full_name
+    full_name="${full_name:-${def_name:-Test User}}"
+    read -r -p "  Test hostname [${def_host:-nixos-test}]: " hostname
+    hostname="${hostname:-${def_host:-nixos-test}}"
+    read -r -p "  Test Git username [${def_gituser:-testuser}]: " git_user
+    git_user="${git_user:-${def_gituser:-testuser}}"
+    read -r -p "  Test Git email [${def_email:-test@example.com}]: " git_email
+    git_email="${git_email:-${def_email:-test@example.com}}"
+    read -r -p "  Test timezone [${def_tz:-Asia/Kolkata}]: " timezone
+    timezone="${timezone:-${def_tz:-Asia/Kolkata}}"
+    read -r -p "  Test locale [${def_locale:-en_US.UTF-8}]: " locale
+    locale="${locale:-${def_locale:-en_US.UTF-8}}"
     echo
     info "No files will be changed."
     printf '  username = "%s";\n' "$username"
@@ -1177,8 +1267,11 @@ m_check_environment() {
     fi
 
     if ! command -v git >/dev/null 2>&1; then
-        error "git command not found."
-        exit 1
+        # Warning, not an error: the whole point of this pass is that a
+        # checkout without git (a downloaded archive, a copied tree) can be
+        # maintained. Only the git-status panel needs it, and that panel
+        # says so itself.
+        warning "git not found; skipping the git status panel."
     fi
 
     success "NixOS environment detected."
@@ -1193,6 +1286,18 @@ m_check_git() {
     section "${M_ICON_GIT} Git status"
 
     cd "$M_NIXOS_DIR"
+
+    # Without git, or in a tree that never had a .git, there is no status
+    # to report -- and neither condition says anything about the system.
+    if ! command -v git >/dev/null 2>&1; then
+        warning "git is absent; skipping the status panel."
+        return 0
+    fi
+    git config --global --add safe.directory "$M_NIXOS_DIR" 2>/dev/null || true
+    if ! git -C "$M_NIXOS_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+        info "Not a git repository; there is no status to show."
+        return 0
+    fi
 
     if [[ -n "$(git status --porcelain)" ]]; then
 
@@ -1632,6 +1737,23 @@ CI_ESP_LABEL="EFI"
 CI_ROOT_LABEL="nixos"
 CI_DRY_RUN=0
 
+# Space arithmetic, derived from what this configuration actually ships
+# (~7.5 GB of packages) rather than guessed per machine:
+#
+#   CI_BUILD_RESERVE_GB  kept free for the store and nix's temporaries;
+#                        install-time swap is never allowed to eat into it.
+#   CI_MIN_DISK_BYTES    below this the install is refused BEFORE anything
+#                        is erased, instead of failing mid-build afterwards.
+#   CI_WARN_DISK_BYTES   still possible, but worth saying out loud.
+CI_BUILD_RESERVE_GB=10
+CI_MIN_DISK_BYTES=12884901888  # 12 GiB
+CI_WARN_DISK_BYTES=21474836480 # 20 GiB
+
+# Decided by the pre-destructive flake validation: whether the copy placed
+# on the target keeps its .git directory or is evaluated as a plain path.
+# Empty means "not decided yet".
+CI_STRIP_GIT=""
+
 # GPT partition type GUIDs, as reported by lsblk PARTTYPE. sgdisk's
 # two-letter codes are different (ef00/ef02/8300); both spellings appear
 # below at their respective call sites.
@@ -1778,7 +1900,8 @@ ci_preflight() {
         echo
         error "A stock NixOS installer ISO provides all of these."
         info "If one really is absent, borrow it without installing anything:"
-        info "  nix-shell -p gptfdisk dosfstools e2fsprogs efibootmgr util-linux"
+        info "  nix-shell -p gptfdisk parted dosfstools e2fsprogs efibootmgr util-linux"
+        info "(gptfdisk provides sgdisk; either sgdisk or parted is enough.)"
 
         if [[ "$CI_DRY_RUN" -eq 1 ]]; then
             CI_PARTITIONER="${CI_PARTITIONER:-sgdisk}"
@@ -1792,10 +1915,17 @@ ci_preflight() {
     v_ok "partitioner: $CI_PARTITIONER"
     v_ok "fat filesystem tool: $CI_MKFS_FAT"
 
-    # Advisory here. ci_handle_stale_efi treats a missing efibootmgr as a
-    # verification failure, which is where it actually matters.
+    # Without efibootmgr a UEFI install cannot clean up the boot entries it
+    # finds, and ci_handle_stale_efi will mark the finished install failed
+    # at the very last step. Refusing here -- before anything is erased --
+    # is the same verdict, delivered while it is still free to fix.
     if command -v efibootmgr >/dev/null 2>&1; then
         v_ok "efibootmgr present"
+    elif [[ "$CI_FIRMWARE" == "UEFI" && "$CI_DRY_RUN" -eq 0 ]]; then
+        error "efibootmgr is required for a UEFI install (stale boot entries are a verification failure)."
+        info "A stock NixOS installer ISO provides it; otherwise:"
+        info "  nix-shell -p efibootmgr"
+        return 1
     else
         v_info "efibootmgr absent; stale UEFI entries could not be cleaned"
     fi
@@ -1806,6 +1936,30 @@ ci_preflight() {
         v_info "git absent; the copied repository will fall back to a plain path"
     fi
 
+    # Only matters when the installer media is a loop-mounted image, but
+    # that is exactly how findiso= boots, and the protection list needs to
+    # trace the loop back to its backing disk.
+    if command -v losetup >/dev/null 2>&1; then
+        v_ok "losetup present"
+    else
+        v_info "losetup absent; a loop-mounted installer image cannot be traced to its disk"
+    fi
+
+    # The copy comes from here and the release step unmounts $CI_TARGET --
+    # running the installer from a directory on the target would unmount
+    # its own source half-way through.
+    case "$ROOT" in
+    "$CI_TARGET" | "$CI_TARGET"/*)
+        if [[ "$CI_DRY_RUN" -eq 1 ]]; then
+            warning "This script runs from under $CI_TARGET ($ROOT); a real run would release it from under itself."
+        else
+            error "This script is running from under $CI_TARGET ($ROOT)."
+            error "Releasing the target would unmount it from under the installer. Move it first."
+            return 1
+        fi
+        ;;
+    esac
+
     # Reported rather than gated. The writable half of the ISO's /nix/store
     # is a tmpfs in RAM, so this number is what the build has to fit in until
     # swap is added on the target after mounting.
@@ -1813,6 +1967,9 @@ ci_preflight() {
     ram_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || printf 0)"
     if [[ "$ram_kb" -gt 0 ]]; then
         v_info "RAM $((ram_kb / 1024 / 1024)) GiB; the ISO store is RAM-backed until swap is added"
+        if [[ "$ram_kb" -lt $((4 * 1024 * 1024)) && "$CI_DRY_RUN" -eq 0 ]]; then
+            warning "RAM is under 4 GiB; the build will lean hard on install-time swap."
+        fi
     fi
 
     if ! ci_check_network; then
@@ -1853,11 +2010,31 @@ ci_require_live() {
 }
 
 # The graphical ISO logs in as an unprivileged user, so this is a normal
-# thing to hit rather than a mistake. Say what to do about it.
+# thing to hit rather than a mistake. When a passwordless sudo exists, take
+# it and carry the command line over: SETUP_ARGS was captured at the top of
+# the script exactly for this, and the guard variable stops a sudo that
+# hands back the same uid from looping forever. The menu case (no
+# arguments at all) re-enters this flow by name -- this function has
+# exactly one caller, clean_install, and only on a real run.
 ci_require_root() {
     if [[ "$EUID" -eq 0 ]]; then return 0; fi
+
+    if command -v sudo >/dev/null 2>&1 &&
+        [[ -z "${SUNFLOWER_SUDO_REEXEC:-}" ]] &&
+        sudo -n true 2>/dev/null; then
+        info "Re-running as root through passwordless sudo."
+        SUNFLOWER_SUDO_REEXEC=1
+        export SUNFLOWER_SUDO_REEXEC
+        if [[ ${#SETUP_ARGS[@]} -gt 0 ]]; then
+            exec sudo -E -- "$0" "${SETUP_ARGS[@]}"
+        else
+            exec sudo -E -- "$0" clean-install
+        fi
+    fi
+
     error "A clean installation has to run as root."
-    info "Re-run it as:  sudo ./setup.sh"
+    info "Re-run it as:  sudo $0 ${SETUP_ARGS[*]:-clean-install}"
+    info "(with a passwordless sudo the script re-runs itself as root automatically.)"
     return 1
 }
 
@@ -1879,9 +2056,119 @@ ci_firmware_detect() {
     fi
 }
 
+# Every mount on the system as source<TAB>target pairs. Parsing with
+# findmnt -P (shell-style variable quoting, escaped) instead of the raw
+# output is what makes a target path containing a space survive: with
+# IFS=tab the two fields separate exactly as printed. Plain
+# `findmnt -rn -o SOURCE,TARGET` splits a space-containing mountpoint
+# across fields and is unusable for this.
+ci_all_mounts() {
+    local line src mnt
+    command -v findmnt >/dev/null 2>&1 || return 0
+    while IFS= read -r line; do
+        # SOURCE="..." TARGET="..."  (backslash-escaped inside quotes)
+        src="${line#*SOURCE=\"}"
+        src="${src%%\"*}"
+        mnt="${line#*TARGET=\"}"
+        mnt="${mnt%%\"*}"
+        [[ -n "$src" && -n "$mnt" ]] || continue
+        printf '%s\t%s\n' "$src" "$mnt"
+    done < <(findmnt -P -o SOURCE,TARGET 2>/dev/null || true)
+}
+
+# The whole disk a block device ultimately sits on, printed; nothing when
+# it cannot be traced (not a block device, tmpfs/overlay, or a virtual
+# chain with no physical disk behind it).
+#
+# lsblk -s walks from the device UP through partitions to the disk -- and
+# for device-mapper through its slaves too -- which PKNAME alone does not
+# give (PKNAME stops at the first layer).
+ci_disk_of() {
+    local src="$1" name type
+
+    # /dev/sda1[/nix/store] and friends: the [..] part is a subvolume or
+    # source annotation, not a device.
+    src="${src%%\[*}"
+    [[ "$src" == /dev/* ]] || return 0
+    [[ -b "$src" ]] || return 0
+
+    while read -r name type; do
+        [[ "$type" == "disk" ]] || continue
+        printf '/dev/%s\n' "$name"
+        return 0
+    done < <(lsblk -s -nro NAME,TYPE "$src" 2>/dev/null)
+
+    # A loop device reports no parent: ask for its backing file and use
+    # the disk holding that file. That is how the installer media is
+    # reached when the ISO is loop-mounted (booted with findiso=, for
+    # example).
+    if [[ "$src" == /dev/loop* ]]; then
+        ci_disk_of_loop "$src"
+    fi
+    return 0
+}
+
+ci_disk_of_loop() {
+    local loop="$1" file src tgt best_src="" best_tgt=""
+
+    command -v losetup >/dev/null 2>&1 || return 0
+    file="$(losetup -nO BACK-FILE "$loop" 2>/dev/null | head -n1 || true)"
+    [[ "$file" == /* ]] || return 0
+
+    # The file lives on some mounted filesystem; the deepest mount that
+    # contains it is the one holding it.
+    while IFS=$'\t' read -r src tgt; do
+        [[ -n "$src" && -n "$tgt" ]] || continue
+        if [[ "$tgt" == "/" ]]; then
+            :
+        else
+            case "$file" in "$tgt"/*) ;; *) continue ;; esac
+        fi
+        if [[ ${#tgt} -gt ${#best_tgt} ]]; then
+            best_tgt="$tgt"
+            best_src="$src"
+        fi
+    done < <(ci_all_mounts)
+
+    [[ -n "$best_src" ]] || return 0
+    ci_disk_of "$best_src"
+}
+
+# Is $1 (a findmnt source) physically on $2 (a whole disk)?
+ci_source_on_disk() {
+    local src="$1" disk="$2" found
+
+    [[ -n "$src" && -n "$disk" ]] || return 1
+    found="$(ci_disk_of "$src" || true)"
+    [[ -n "$found" && "$found" == "$disk" ]]
+}
+
+# Every mountpoint that ultimately sits on $1, one per line.
+ci_disk_mounts() {
+    local src mnt
+    while IFS=$'\t' read -r src mnt; do
+        [[ -n "$mnt" ]] || continue
+        ci_source_on_disk "$src" "$1" && printf '%s\n' "$mnt"
+    done < <(ci_all_mounts)
+    return 0
+}
+
+# One-line description of a disk: size, model, transport, then the facts
+# that matter for safety -- removable or not, and where its partitions are
+# currently mounted. Those are what decide whether a disk is a sensible
+# target and what ci_release_target has to undo first.
 ci_disk_desc() {
-    lsblk -dnpo SIZE,MODEL,TRAN "$1" 2>/dev/null |
-        sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' || true
+    local dev="$1" out rm mounts
+
+    out="$(lsblk -dnpo SIZE,MODEL,TRAN "$dev" 2>/dev/null |
+        sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' || true)"
+    rm="$(lsblk -dnro RM "$dev" 2>/dev/null | tr -d '[:space:]' || true)"
+    mounts="$(ci_disk_mounts "$dev" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//' || true)"
+
+    if [[ "$rm" == "1" ]]; then out="$out removable"; fi
+    if [[ -n "$mounts" ]]; then out="$out mounted: $mounts"; fi
+
+    printf '%s\n' "$out"
 }
 
 # nvme0n1 -> nvme0n1p1, sda -> sda1, vda -> vda1
@@ -1889,45 +2176,53 @@ ci_part_path() {
     if [[ "$1" =~ [0-9]$ ]]; then printf '%sp%s\n' "$1" "$2"; else printf '%s%s\n' "$1" "$2"; fi
 }
 
-# Disks the live environment itself came from. Never candidates.
+# Disks the live environment itself came from or is running from. Never
+# candidates, whatever else is true:
+#
+#   * whatever backs /, /iso, /nix, /boot and the read-only store
+#   * any partition carrying the ISO filesystem or its label
+#   * the disk that backs a loop-mounted ISO
+#
+# All of it resolves through ci_disk_of, so a path like
+# /dev/sda2[/iso/boot] or a loop device still lands on a whole disk.
 ci_installer_disks() {
-    local src pk
+    local src tgt
     {
-        findmnt -no SOURCE /iso 2>/dev/null || true
-        findmnt -no SOURCE /nix/.ro-store 2>/dev/null || true
+        for tgt in / /iso /nix /nix/store /nix/.ro-store /boot /boot/efi /run/findiso; do
+            findmnt -no SOURCE "$tgt" 2>/dev/null || true
+        done
         lsblk -rno NAME,FSTYPE,LABEL 2>/dev/null |
             awk '$2=="iso9660" || $3 ~ /^NIXOS_ISO/ {print "/dev/"$1}' || true
     } | while read -r src; do
-        [[ "$src" == /dev/* ]] || continue
-        pk="$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1)"
-        if [[ -n "$pk" ]]; then printf '/dev/%s\n' "$pk"; else printf '%s\n' "$src"; fi
+        [[ -n "$src" ]] || continue
+        ci_disk_of "$src"
     done | sort -u
 }
 
-ci_candidate_disks() {
-    local protected dev rm bytes
+# Every disk that could be an installation target, as
+# "device removable size_bytes" lines. Loop, ram, zram, md and floppy
+# devices are never targets and are dropped here.
+#
+# Disks with mounted partitions are NOT dropped: those mounts are exactly
+# what ci_release_target undoes before partitioning, and skipping them
+# would make a re-run after a failed attempt unable to find its own disk
+# (the failure this used to cause).
+ci_all_disks() {
+    local dev rm bytes protected
     protected=" $(ci_installer_disks | tr '\n' ' ') "
 
     lsblk -dprno NAME,TYPE,RM 2>/dev/null |
         awk '$2=="disk"{print $1" "$3}' |
         while read -r dev rm; do
             case "$dev" in
-            /dev/zram* | /dev/loop* | /dev/ram* | /dev/fd* | /dev/md*) continue ;;
+            /dev/zram* | /dev/loop* | /dev/ram* | /dev/fd* | /dev/md* | /dev/dm-*) continue ;;
             esac
             case "$protected" in *" $dev "*) continue ;; esac
-            # Not a target: any disk with a mounted filesystem is in use
-            # (on the running system this is the root disk; on the ISO it
-            # would mean the media check above missed something).
-            if lsblk -nrpo MOUNTPOINT "$dev" 2>/dev/null | grep -q .; then
-                continue
-            fi
-            # Too small to hold a system.
             bytes="$(lsblk -dnbo SIZE "$dev" 2>/dev/null || printf 0)"
-            if [[ -z "$bytes" || "$bytes" -lt 4294967296 ]]; then
-                continue
-            fi
-            printf '%s %s\n' "$dev" "$rm"
+            [[ -n "$bytes" && "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+            printf '%s %s %s\n' "$dev" "$rm" "$bytes"
         done
+    return 0
 }
 
 # Every probe here is advisory and must never abort the run under set -e.
@@ -1945,40 +2240,83 @@ ci_show_disks() {
     echo
     local dev
     while read -r dev; do
-        [[ -n "$dev" ]] && info "installer media, protected: $dev  $(ci_disk_desc "$dev")"
+        [[ -n "$dev" ]] && info "installer media / running system, protected: $dev  $(ci_disk_desc "$dev")"
     done < <(ci_installer_disks || true)
 }
 
+# Pick CI_DISK. Everything block-level is re-derived here rather than
+# remembered from the listing, so what gets chosen is what the kernel
+# currently reports.
 ci_select_target_disk() {
     need_cmd lsblk
 
-    local -a fixed=() removable=()
-    local dev rm
+    local -a fixed=() removable=() small=()
+    local dev rm bytes
 
-    while read -r dev rm; do
+    while read -r dev rm bytes; do
         [[ -n "$dev" ]] || continue
-        if [[ "$rm" == "1" ]]; then removable+=("$dev"); else fixed+=("$dev"); fi
-    done < <(ci_candidate_disks || true)
+        # ci_all_disks already guarantees digits; anything else counts as
+        # unknown-size, and unknown is not a target.
+        [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+        if [[ "$bytes" -lt "$CI_MIN_DISK_BYTES" ]]; then
+            small+=("$dev")
+        elif [[ "$rm" == "1" ]]; then
+            removable+=("$dev")
+        else
+            fixed+=("$dev")
+        fi
+    done < <(ci_all_disks || true)
 
     local d
-    for d in ${removable[@]+"${removable[@]}"}; do
-        warning "Ignoring removable disk: $d  $(ci_disk_desc "$d")"
+    for d in ${small[@]+"${small[@]}"}; do
+        info "too small for this install (needs at least 12 GiB): $d  $(ci_disk_desc "$d")"
     done
 
-    if [[ "${#fixed[@]}" -eq 0 ]]; then
-        error "No fixed disk found that is not the installer media."
-        error "Refusing to guess a target."
+    local total=$((${#fixed[@]} + ${#removable[@]}))
+
+    if [[ "$total" -eq 0 ]]; then
+        error "No disk available for installation."
+        error "The installer media and the running system's disk are protected, and"
+        error "disks under 12 GiB cannot hold this configuration. Refusing to guess."
         return 1
     fi
 
-    if [[ "${#fixed[@]}" -eq 1 ]]; then
+    # Auto-selection only for exactly one fixed candidate. Anything else --
+    # including a lone removable disk -- goes through the numbered table,
+    # because an external USB is never chosen for the user, not even when
+    # it is the only thing left.
+    if [[ "${#fixed[@]}" -eq 1 && "${#removable[@]}" -eq 0 ]]; then
         CI_DISK="${fixed[0]}"
         info "Target disk: $CI_DISK  $(ci_disk_desc "$CI_DISK")"
     else
-        section "Multiple candidate disks"
-        local i=1
-        for d in "${fixed[@]}"; do
-            printf '   %b%2s%b  %s  %s\n' "$CYAN" "$i" "$RESET" "$d" "$(ci_disk_desc "$d")"
+        section "Candidate disks"
+
+        # Display order and selection order are the same array: fixed
+        # disks first, removable ones after, each row labelled with the
+        # class it was put in rather than re-probed for the table.
+        local -a candidates=() kinds=()
+        local d2
+        for d2 in ${fixed[@]+"${fixed[@]}"}; do
+            candidates+=("$d2")
+            kinds+=("fixed")
+        done
+        for d2 in ${removable[@]+"${removable[@]}"}; do
+            candidates+=("$d2")
+            kinds+=("removable")
+        done
+
+        printf '   %b%2s%b  %-13s %-7s %-24s %-7s %-9s %s\n' \
+            "$CYAN" "#" "$RESET" "DEVICE" "SIZE" "MODEL" "TRAN" "KIND" "MOUNTPOINTS"
+        local i=0 size model trans mounts
+        while [[ "$i" -lt "${#candidates[@]}" ]]; do
+            d="${candidates[$i]}"
+            size="$(lsblk -dnpo SIZE "$d" 2>/dev/null | tr -d ' ' || true)"
+            model="$(lsblk -dnpo MODEL "$d" 2>/dev/null | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' || true)"
+            trans="$(lsblk -dnpo TRAN "$d" 2>/dev/null | tr -d ' ' || true)"
+            mounts="$(ci_disk_mounts "$d" | tr '\n' ',' | sed -E 's/,$//' || true)"
+            printf '   %b%2s%b  %-13s %-7s %-24s %-7s %-9s %s\n' \
+                "$CYAN" "$((i + 1))" "$RESET" "$d" "${size:-?}" "${model:-?}" \
+                "${trans:-?}" "${kinds[$i]}" "${mounts:--}"
             i=$((i + 1))
         done
         echo
@@ -1988,13 +2326,18 @@ ci_select_target_disk() {
             error "Not a number."
             return 1
         fi
-        if [[ "$pick" -lt 1 || "$pick" -gt "${#fixed[@]}" ]]; then
+        if [[ "$pick" -lt 1 || "$pick" -gt "${#candidates[@]}" ]]; then
             error "Out of range."
             return 1
         fi
-        CI_DISK="${fixed[$((pick - 1))]}"
+        CI_DISK="${candidates[$((pick - 1))]}"
     fi
 
+    if ci_installer_disks | grep -qxF "$CI_DISK"; then
+        error "$CI_DISK holds the live environment itself (or the running system)."
+        error "Refusing to use it as a target."
+        return 1
+    fi
     if [[ ! -b "$CI_DISK" ]]; then
         if [[ "$CI_DRY_RUN" -eq 1 ]]; then
             warning "$CI_DISK is not a block device here; continuing because this is a dry run."
@@ -2002,6 +2345,24 @@ ci_select_target_disk() {
             error "Not a block device: $CI_DISK"
             return 1
         fi
+    fi
+
+    bytes="$(lsblk -dnbo SIZE "$CI_DISK" 2>/dev/null || printf 0)"
+    [[ "$bytes" =~ ^[0-9]+$ ]] || bytes=0
+    if [[ "$bytes" -lt "$CI_MIN_DISK_BYTES" ]]; then
+        error "$CI_DISK is smaller than the 12 GiB floor this install needs."
+        return 1
+    fi
+    if [[ "$bytes" -lt "$CI_WARN_DISK_BYTES" ]]; then
+        warning "$CI_DISK is only $((bytes / 1073741824)) GiB; this configuration ships ~7.5 GiB of packages."
+        warning "The build reserve is small; free space is checked again before it starts."
+    fi
+
+    local on_mounts
+    on_mounts="$(ci_disk_mounts "$CI_DISK" | tr '\n' ' ' | sed -E 's/[[:space:]]+$//' || true)"
+    if [[ -n "$on_mounts" ]]; then
+        info "Partitions currently mounted on $CI_DISK (all released before partitioning):"
+        info "  $on_mounts"
     fi
 
     # Partition 1 is the ESP in UEFI mode and the BIOS boot partition in
@@ -2014,6 +2375,55 @@ ci_select_target_disk() {
         CI_ESP=""
         CI_BIOS_PART="$(ci_part_path "$CI_DISK" 1)"
     fi
+}
+
+# The last re-check, run after the typed confirmations and immediately
+# before the disk is touched. Anything that changed in between -- a
+# partition auto-mounted by the desktop, a re-plugged USB, a /mnt left
+# behind by an earlier attempt on a DIFFERENT disk -- must not slip
+# through on the strength of an answer given minutes earlier.
+ci_verify_target_disk() {
+    section "Final disk check"
+
+    if [[ ! -b "$CI_DISK" ]]; then
+        error "$CI_DISK is not a block device any more."
+        return 1
+    fi
+    case "$CI_DISK" in
+    /dev/loop* | /dev/ram* | /dev/zram* | /dev/fd* | /dev/md* | /dev/dm-*)
+        error "$CI_DISK is a virtual device, not an installation target."
+        return 1
+        ;;
+    esac
+    if ci_installer_disks | grep -qxF "$CI_DISK"; then
+        error "$CI_DISK holds the live environment itself (or the running system)."
+        error "Refusing to erase it."
+        return 1
+    fi
+
+    local bytes
+    bytes="$(lsblk -dnbo SIZE "$CI_DISK" 2>/dev/null || printf 0)"
+    if [[ ! "$bytes" =~ ^[0-9]+$ ]] || [[ "$bytes" -lt "$CI_MIN_DISK_BYTES" ]]; then
+        error "$CI_DISK reports ${bytes} bytes; below the 12 GiB this install needs."
+        return 1
+    fi
+
+    # A mount left on /mnt from a previous attempt on the SAME disk is
+    # what ci_release_target exists to undo. A mount from anywhere else
+    # means something unrelated is in the way.
+    if mountpoint -q "$CI_TARGET" 2>/dev/null; then
+        local src
+        src="$(findmnt -no SOURCE "$CI_TARGET" 2>/dev/null || true)"
+        if ! ci_source_on_disk "$src" "$CI_DISK"; then
+            error "$CI_TARGET is mounted from ${src:-unknown}, which is not on $CI_DISK."
+            error "Refusing to stack a new install on top of an unrelated mount."
+            return 1
+        fi
+        info "$CI_TARGET is mounted from $CI_DISK; the release step will unmount it."
+    fi
+
+    success "Target re-checked: $CI_DISK is safe to erase ($CI_FIRMWARE layout, $(ci_disk_desc "$CI_DISK"))."
+    return 0
 }
 
 # What the error panel shows: where we were, what is mounted, what swap is
@@ -2096,6 +2506,19 @@ ci_on_error() {
 # returns 0 (success or user abort).
 ci_install_entry() {
     local arg="${1:-}"
+
+    # Reject a bad command line HERE, before the ERR trap is armed: a typo
+    # in an option is a usage message and exit 2, not the failure panel
+    # that an aborted installation would produce.
+    case "$arg" in
+    "" | --dry-run | -n) ;;
+    *)
+        error "Unknown option for clean-install: $arg"
+        info "Usage: ./setup.sh clean-install [--dry-run]"
+        return 2
+        ;;
+    esac
+
     CI_IN_ERR=0
     CI_STARTED_DESTRUCTIVE=0
     CI_PHASE="init"
@@ -2169,44 +2592,51 @@ ci_confirm_destroy() {
 # Every mount whose source ultimately sits on $CI_DISK, as "source<TAB>target"
 # lines, deepest mount last (callers sort). This is the single authority for
 # "is the target disk free?": it catches /mnt, its children, and any stray
-# mount of a partition or mapper device that traces back to the disk.
+# mount of a partition or mapper device that traces back to the disk -- the
+# parent walk in ci_disk_of covers partitions and device-mapper layers, and
+# a bind mount like /dev/sda1[/subvol] matches after the [..] suffix is
+# stripped.
 ci_mounts_of_disk() {
-    local src mnt pk
-    while read -r src mnt; do
-        [[ "$src" == /dev/* ]] || continue
-        pk="$(lsblk -no PKNAME "$src" 2>/dev/null | head -n1 || true)"
-        if [[ -n "$pk" ]]; then
-            [[ "/dev/$pk" == "$CI_DISK" ]] || continue
-        else
-            [[ "$src" == "$CI_DISK" ]] || continue
+    local src mnt
+    while IFS=$'\t' read -r src mnt; do
+        [[ -n "$mnt" ]] || continue
+        if ci_source_on_disk "$src" "$CI_DISK"; then
+            printf '%s\t%s\n' "$src" "$mnt"
         fi
-        printf '%s\t%s\n' "$src" "$mnt"
-    done < <(findmnt -rn -o SOURCE,TARGET 2>/dev/null || true)
+    done < <(ci_all_mounts)
+    return 0
 }
 
 # Return the disk to a completely unmounted, swap-free state before
 # repartitioning it. A rerun after a failed attempt lands here, which is what
 # makes "just run it again" safe.
+#
+# The unmount list is the union of two things: mounts that trace back to
+# $CI_DISK, and mounts whose TARGET lies under $CI_TARGET. The second set is
+# not redundant -- an attempt made against a different disk can leave /mnt
+# mounted from elsewhere, and stacking a new install on top of it would be
+# exactly the silent failure this step exists to prevent.
 ci_release_target() {
     section "Releasing target"
 
     # Swap first: a mounted-onto swapfile is not a mount, findmnt will not
     # show it, and mkfs under active swap is how disks get corrupted.
-    local s
+    local s own
     while read -r s; do
         [[ -n "$s" ]] || continue
-        [[ -b "$s" || -f "$s" ]] || continue
+        own=""
         if [[ -f "$s" ]]; then
-            case "$s" in "$CI_TARGET"/*) ;; *) continue ;; esac
-        else
-            local pk
-            pk="$(lsblk -no PKNAME "$s" 2>/dev/null | head -n1 || true)"
-            if [[ -n "$pk" ]]; then
-                [[ "/dev/$pk" == "$CI_DISK" ]] || continue
-            else
-                [[ "$s" == "$CI_DISK" ]] || continue
+            # Only swap files we are responsible for: under CI_TARGET, or
+            # the one the installer itself created.
+            case "$s" in
+            "$CI_TARGET"/*) own=1 ;;
+            esac
+        elif [[ "$s" == /dev/* ]]; then
+            if [[ "$s" == "$CI_DISK" ]] || [[ "$(ci_disk_of "$s" || true)" == "$CI_DISK" ]]; then
+                own=1
             fi
         fi
+        [[ -n "$own" ]] || continue
         info "swapoff $s"
         swapoff "$s" 2>/dev/null || {
             error "Could not disable swap: $s"
@@ -2214,13 +2644,25 @@ ci_release_target() {
         }
     done < <(swapon --show=NAME --noheadings 2>/dev/null || true)
 
-    # Unmount, deepest path first so parents come after their children.
-    local lines attempt p src mnt
-    lines="$(ci_mounts_of_disk | awk -F'\t' '{ print length($2), $0 }' | sort -rn | cut -d' ' -f2- || true)"
+    # Union of the two sets above, deepest path first so parents come after
+    # their children.
+    local lines attempt src mnt
+    lines="$(
+        {
+            ci_mounts_of_disk
+            while IFS=$'\t' read -r src mnt; do
+                [[ -n "$mnt" ]] || continue
+                case "$mnt" in
+                "$CI_TARGET" | "$CI_TARGET"/*) printf '%s\t%s\n' "$src" "$mnt" ;;
+                esac
+            done < <(ci_all_mounts)
+        } | sort -u | awk -F'\t' '{ print length($2), $0 }' | sort -rn | cut -d' ' -f2- || true
+    )"
 
     if [[ -z "$lines" ]]; then
         success "Nothing on $CI_DISK is mounted."
-        return 0
+        ci_assert_released
+        return $?
     fi
 
     while IFS=$'\t' read -r src mnt; do
@@ -2238,14 +2680,25 @@ ci_release_target() {
         fi
     done <<<"$lines"
 
-    # Final authority check, not a spot check: nothing left on the disk.
-    if [[ -n "$(ci_mounts_of_disk)" ]]; then
+    ci_assert_released
+}
+
+# The final authority check, not a spot check: nothing left on the disk and
+# /mnt itself not mounted from anywhere.
+ci_assert_released() {
+    local still
+    still="$(ci_mounts_of_disk)"
+    if [[ -n "$still" ]]; then
         error "Parts of $CI_DISK are still mounted:"
-        ci_mounts_of_disk | sed 's/^/    /' || true
+        printf '%s\n' "$still" | sed 's/^/    /'
         return 1
     fi
-
+    if mountpoint -q "$CI_TARGET" 2>/dev/null; then
+        error "$CI_TARGET is still mounted from $(findmnt -no SOURCE "$CI_TARGET" 2>/dev/null || echo unknown)."
+        return 1
+    fi
     success "Target released: no mounts, no swap on $CI_DISK."
+    return 0
 }
 
 ci_wait_for_part() {
@@ -2463,12 +2916,28 @@ ci_setup_swap() {
     export TMPDIR="$CI_TARGET/.setup-tmp"
     mkdir -p "$TMPDIR"
 
-    local avail_kb size_g
+    # Size is derived from what is free AFTER the build reserve:
+    # swap may take a quarter of free space, up to 8 GiB, and may never
+    # push free space below CI_BUILD_RESERVE_GB. Nix needs that room for
+    # the store and its temporaries -- swap that eats into it just moves
+    # the failure from OOM to ENOSPC, later and with less information.
+    local avail_kb reserve_kb swap_kb size_g
     avail_kb="$(df -Pk "$CI_TARGET" | awk 'NR==2{print $4}')"
-    size_g=$((avail_kb / 1024 / 1024 / 4))
-    if [[ "$size_g" -gt 8 ]]; then size_g=8; fi
+    [[ "$avail_kb" =~ ^[0-9]+$ ]] || avail_kb=0
+    reserve_kb=$((CI_BUILD_RESERVE_GB * 1024 * 1024))
 
-    if [[ "$size_g" -lt 2 ]]; then
+    if [[ $((avail_kb - reserve_kb)) -lt $((2 * 1024 * 1024)) ]]; then
+        v_info "less than 2 GiB above the ${CI_BUILD_RESERVE_GB} GiB build reserve; continuing without install-time swap"
+        return 0
+    fi
+
+    swap_kb=$((avail_kb / 4))
+    if [[ "$swap_kb" -gt $((8 * 1024 * 1024)) ]]; then swap_kb=$((8 * 1024 * 1024)); fi
+    if [[ $((avail_kb - swap_kb)) -lt "$reserve_kb" ]]; then
+        swap_kb=$((avail_kb - reserve_kb))
+    fi
+    size_g=$((swap_kb / 1024 / 1024))
+    if [[ "$size_g" -lt 1 ]]; then
         v_info "too little free space for install-time swap; continuing without it"
         return 0
     fi
@@ -2487,11 +2956,44 @@ ci_setup_swap() {
 
     if mkswap "$f" >/dev/null 2>&1 && swapon "$f" 2>/dev/null; then
         CI_SWAPFILE="$f"
-        success "${size_g} GiB install-time swap active, scratch space on the target."
+        success "${size_g} GiB install-time swap active; $(((avail_kb - swap_kb) / 1024)) MiB left free for the build."
     else
         v_info "could not enable swap; continuing without it"
         rm -f "$f"
     fi
+}
+
+# The last free-space question, asked after mount and swap and immediately
+# before the build starts: everything that will consume space is now in
+# place, so this is the honest number. Fill the store half-way through and
+# the failure surfaces as an ENOSPC from deep inside a build; refuse here
+# and it surfaces as one clear message with the disk still intact.
+ci_check_space() {
+    section "Free space"
+
+    local avail_kb reserve_kb ram_kb
+    avail_kb="$(df -Pk "$CI_TARGET" | awk 'NR==2{print $4}')"
+    [[ "$avail_kb" =~ ^[0-9]+$ ]] || avail_kb=0
+    reserve_kb=$((CI_BUILD_RESERVE_GB * 1024 * 1024))
+
+    info "target free: $((avail_kb / 1024)) MiB; build reserve: $CI_BUILD_RESERVE_GB GiB"
+
+    if [[ "$avail_kb" -lt "$reserve_kb" ]]; then
+        error "only $((avail_kb / 1024)) MiB free on $CI_TARGET, below the ${CI_BUILD_RESERVE_GB} GiB the build needs."
+        error "Refusing to start a build that would run the store out of space."
+        if [[ "$avail_kb" -lt $((2 * 1024 * 1024)) ]]; then
+            info "This disk is too small for this configuration; a larger one is needed."
+        fi
+        return 1
+    fi
+
+    ram_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || printf 0)"
+    if [[ "$ram_kb" -gt 0 && "$ram_kb" -lt $((4 * 1024 * 1024)) ]]; then
+        warning "RAM is only $((ram_kb / 1024)) MiB; the build will lean hard on install-time swap."
+    fi
+
+    success "Space check passed: $((avail_kb / 1024)) MiB free with the reserve intact."
+    return 0
 }
 
 # Idempotent and quiet when there is nothing to do: this runs from the EXIT
@@ -2519,11 +3021,19 @@ ci_teardown_swap() {
     return 0
 }
 
-# The other half of the EXIT-trap cleanup: the build cache and scratch
-# directory, but only if we actually got far enough to create them.
+# The other half of the EXIT-trap cleanup: every scratch directory the
+# build itself created, plus a leftover swapfile from an attempt that died
+# before CI_SWAPFILE was ever set. Idempotent, and only after the
+# destructive phase has actually started.
 ci_cleanup_build_dirs() {
     if [[ "${CI_STARTED_DESTRUCTIVE:-0}" -ne 1 ]]; then return 0; fi
-    rm -rf "$CI_TARGET/.setup-tmp" 2>/dev/null || true
+    rm -rf "$CI_TARGET/.setup-tmp" "$CI_TARGET/.nix-cache" "$CI_TARGET/.nix-tmp" \
+        "$CI_TARGET/.nixos-build-swap" 2>/dev/null || true
+    # A previous failed attempt's swapfile: off first if still on, then gone.
+    if [[ -f "$CI_TARGET/.setup-swapfile" ]]; then
+        swapoff "$CI_TARGET/.setup-swapfile" 2>/dev/null || true
+        rm -f "$CI_TARGET/.setup-swapfile" 2>/dev/null || true
+    fi
     return 0
 }
 
@@ -2556,16 +3066,34 @@ ci_place_repo() {
     fi
 
     # A flake named as a directory that contains .git is fetched as a git
-    # tree: untracked files are invisible to the build, and a foreign owner
-    # makes git refuse the repository as dubious. Both are fixed here, once.
+    # tree: only what the index knows about is visible to the build, and a
+    # foreign owner makes git refuse the repository as dubious.
+    #
+    # Whether to keep .git at all was decided by ci_validate_config_copy:
+    # CI_STRIP_GIT=1 means the flake was proven to evaluate only as a plain
+    # path (or there was never a .git to keep), and a plain path sees every
+    # file regardless of git state. With no decision on record, fall back
+    # to a health check -- keep it only if it is a real repository whose
+    # index, once staged, covers the tree.
     if [[ -d "$CI_DEST/.git" ]]; then
         if command -v git >/dev/null 2>&1; then
-            git config --global --add safe.directory "$CI_DEST"
+            git config --global --add safe.directory "$CI_DEST" 2>/dev/null || true
+        fi
+
+        if [[ "${CI_STRIP_GIT:-}" == "1" ]]; then
+            info "Dropping .git: the configuration was validated as a plain path."
+            rm -rf "$CI_DEST/.git"
+        elif command -v git >/dev/null 2>&1 &&
+            git -C "$CI_DEST" rev-parse --git-dir >/dev/null 2>&1; then
             if ! git -C "$CI_DEST" add -A >/dev/null 2>&1; then
-                warning "git add -A failed; untracked files may be invisible to the flake."
+                warning "git add -A failed; untracked files would be invisible to the flake."
+                warning "Dropping .git so the flake sees every file as a plain path."
+                rm -rf "$CI_DEST/.git"
+            else
+                info ".git kept: staged, so every file on disk is visible to the flake."
             fi
         else
-            warning "git is absent here; the copy keeps no history so the flake can read it as a plain path."
+            info "Dropping .git: not a usable repository here (or git is absent)."
             rm -rf "$CI_DEST/.git"
         fi
     fi
@@ -2590,7 +3118,7 @@ CI_ID_KEYS=(username name hostname gitUser email timezone locale)
 declare -A CI_ID=()
 
 ci_ask() {
-    local key="$1" label="$2" def="${3:-}" regex="${4:-}" val
+    local key="$1" label="$2" def="${3:-}" regex="${4:-}" validator="${5:-}" val
 
     while true; do
         if [[ -n "$def" ]]; then
@@ -2621,10 +3149,173 @@ ci_ask() {
             warning "$label cannot contain quotes or backslashes."
             continue
         fi
+        # Per-key extra rules (reserved names, RFC shape, e-mail syntax).
+        # The validator prints its own reason; the prompt repeats.
+        if [[ -n "$validator" ]] && ! "$validator" "$val"; then
+            continue
+        fi
 
         CI_ID["$key"]="$val"
         return 0
     done
+}
+
+# ---- identity validators -------------------------------------------------
+#
+# Everything the questionnaire accepts passes through one of these before it
+# can reach lib/variables.nix. They never modify their argument; hostname
+# lowercasing lives in ci_normalize_hostname so there is exactly one place
+# that decides what a hostname becomes.
+
+# Reserved or already-taken account names: users.users.<name>.isNormalUser
+# on top of an existing system account is a NixOS evaluation conflict, and
+# 'root' would put a normal-user shell on uid 0.
+ci_username_ok() {
+    local u="$1"
+
+    if [[ ${#u} -gt 32 ]]; then
+        warning "Username too long (32 characters maximum)."
+        return 1
+    fi
+    if [[ "$u" == *- ]]; then
+        warning "Username cannot end with '-'."
+        return 1
+    fi
+    case "$u" in
+    root | nobody | daemon | bin | sys | sync | halt | shutdown | operator | list | proxy | news | mail)
+        warning "Username '$u' is reserved by the system."
+        return 1
+        ;;
+    esac
+    return 0
+}
+
+# One @, non-empty sides, no spaces. Deliberately not a full RFC 5322
+# parser: this address ends up in git's user.email and nothing else.
+ci_email_ok() {
+    local e="$1"
+
+    if [[ "$e" == *[[:space:]]* ]]; then
+        warning "Email cannot contain spaces."
+        return 1
+    fi
+    if [[ "$e" != *@* || "$e" == @* || "$e" == *@ ]]; then
+        warning "Not a valid email address: $e"
+        return 1
+    fi
+    if [[ "${e#*@}" == *"@"* ]]; then
+        warning "Not a valid email address (more than one @): $e"
+        return 1
+    fi
+    return 0
+}
+
+# RFC 1123 shape: labels of 1-63 letters/digits/hyphens, joined by dots,
+# whole thing at most 253 characters, no leading/trailing dot or hyphen.
+# Only [A-Za-z0-9.-] can appear at all, so no shell metacharacter, no
+# slash, no space and no path traversal ever gets past this.
+ci_hostname_ok() {
+    local h="$1" label
+
+    [[ -n "$h" ]] || return 1
+    [[ ${#h} -le 253 ]] || return 1
+    [[ "$h" =~ ^[A-Za-z0-9.-]+$ ]] || return 1
+    [[ "$h" != .* && "$h" != *. && "$h" != *..* ]] || return 1
+
+    local IFS=.
+    for label in $h; do
+        [[ -n "$label" ]] || return 1
+        [[ ${#label} -le 63 ]] || return 1
+        [[ "$label" != -* && "$label" != *- ]] || return 1
+    done
+    return 0
+}
+
+# Print the hostname to use on stdout; return 1 with the reason on stderr
+# when the input cannot be salvaged. Uppercase is normalised to lowercase
+# with a notice rather than silently accepted -- never in a direction the
+# user did not see, and never while leaving invalid input through.
+ci_normalize_hostname() {
+    local h="$1"
+
+    if [[ "$h" =~ [[:space:]] ]]; then
+        warning "Hostname cannot contain spaces." >&2
+        return 1
+    fi
+    if ! ci_hostname_ok "$h"; then
+        warning "Invalid hostname: '$h'." >&2
+        info "RFC 1123 only: letters, digits, dots and hyphens; each label 1-63" >&2
+        info "characters without a leading or trailing hyphen; at most 253 total." >&2
+        return 1
+    fi
+    if [[ "$h" == *[A-Z]* ]]; then
+        h="${h,,}"
+        warning "Hostnames are lowercase; using '$h'." >&2
+    fi
+    printf '%s' "$h"
+}
+
+# The hostname question, on its own because it is the one answer that is
+# rewritten (lowercased) and the one that must never be validated loosely.
+ci_ask_hostname() {
+    local def="$1" val
+
+    # Show the default in the form that would actually be used: the stored
+    # value may be mixed case, and answering Enter yields the lowercase
+    # spelling. A default that cannot be salvaged becomes no default at
+    # all, rather than a trap that rejects the answer just accepted.
+    if [[ -n "$def" ]]; then
+        def="$(ci_normalize_hostname "$def" 2>/dev/null || true)"
+    fi
+
+    while true; do
+        if [[ -n "$def" ]]; then
+            read -r -p "  Hostname [$def]: " val || {
+                echo
+                return 1
+            }
+            val="${val:-$def}"
+        else
+            read -r -p "  Hostname: " val || {
+                echo
+                return 1
+            }
+        fi
+
+        # Trim surrounding whitespace, then let ci_normalize_hostname be the
+        # single authority on what is legal.
+        val="${val#"${val%%[![:space:]]*}"}"
+        val="${val%"${val##*[![:space:]]}"}"
+
+        if [[ -z "$val" ]]; then
+            warning "Cannot be empty."
+            continue
+        fi
+        if [[ "$val" == *'"'* || "$val" == *\\* ]]; then
+            warning "Hostname cannot contain quotes or backslashes."
+            continue
+        fi
+        if ! val="$(ci_normalize_hostname "$val")"; then
+            continue
+        fi
+
+        CI_ID[hostname]="$val"
+        return 0
+    done
+}
+
+# zoneinfo lives at /usr/share/zoneinfo on most distributions but behind
+# /etc/zoneinfo on NixOS (both the live ISO and the installed system), so
+# checking only the usual path never fires here at all.
+ci_zoneinfo_dir() {
+    local d
+    for d in /etc/zoneinfo /usr/share/zoneinfo; do
+        if [[ -d "$d" ]]; then
+            printf '%s' "$d"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # PCI display adapters as PCI:<bus>@<domain>:<dev>:<func>, decimal, which is
@@ -2664,16 +3355,20 @@ ci_detect_gpu_busids() {
 ci_collect_identity() {
     section "Identity"
     info "Asked now, before anything on disk is touched."
+    info "Defaults come from lib/variables.nix -- never from this live session,"
+    info "whose hostname and user say nothing about the machine being installed."
 
     local cur k
     for k in "${CI_ID_KEYS[@]}"; do
         cur="$(sed -nE "s/^[[:space:]]*${k}[[:space:]]*=[[:space:]]*\"([^\"]*)\";.*/\1/p" "$VARS" | head -n1 || true)"
         case "$k" in
         username)
-            ci_ask "$k" "Username" "$cur" '^[a-z_][a-z0-9_-]*$' || return 1
+            ci_ask "$k" "Username" "$cur" '^[a-z_][a-z0-9_-]*$' ci_username_ok || return 1
             ;;
         hostname)
-            ci_ask "$k" "Hostname" "$cur" '^[a-zA-Z0-9][a-zA-Z0-9.-]*$' || return 1
+            # Its own loop: RFC shape plus lowercase normalisation, neither
+            # of which ci_ask's flat regex can express.
+            ci_ask_hostname "$cur" || return 1
             ;;
         name)
             ci_ask "$k" "Full name" "$cur" || return 1
@@ -2682,7 +3377,7 @@ ci_collect_identity() {
             ci_ask "$k" "Git username" "$cur" || return 1
             ;;
         email)
-            ci_ask "$k" "Git email" "$cur" || return 1
+            ci_ask "$k" "Git email" "$cur" '' ci_email_ok || return 1
             ;;
         timezone)
             ci_ask "$k" "Timezone" "$cur" || return 1
@@ -2693,11 +3388,23 @@ ci_collect_identity() {
         esac
     done
 
-    # Warn, do not block: zoneinfo is present on the ISO, but a legitimate
-    # timezone can still be spelled in a way this check does not know.
-    if [[ -d /usr/share/zoneinfo && ! -e "/usr/share/zoneinfo/${CI_ID[timezone]}" ]]; then
-        warning "Timezone '${CI_ID[timezone]}' not found in /usr/share/zoneinfo; check the spelling."
+    # A timezone that zoneinfo does not have becomes a dangling
+    # /etc/localtime at activation, so it is checked here rather than left
+    # for the build to discover after the disk is already gone. Re-ask until
+    # it resolves; forcing an unknown zone through stays possible for the
+    # case this check simply does not know.
+    local zdir ans
+    if zdir="$(ci_zoneinfo_dir)"; then
+        while ! [[ -e "$zdir/${CI_ID[timezone]}" ]]; do
+            warning "Timezone '${CI_ID[timezone]}' not found in $zdir."
+            read -r -p "  Use it anyway? [y/N]: " ans || return 1
+            if [[ "$ans" =~ ^[Yy]([Ee][Ss])?$ ]]; then break; fi
+            ci_ask timezone "Timezone" "${CI_ID[timezone]}" || return 1
+        done
+    else
+        warning "No zoneinfo directory found here; the timezone cannot be checked."
     fi
+
     if ! [[ "${CI_ID[locale]}" =~ ^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z0-9-]+$ ]]; then
         warning "Locale '${CI_ID[locale]}' does not look like en_US.UTF-8; check the spelling."
     fi
@@ -2875,6 +3582,13 @@ ci_generate_hardware() {
         if ! ci_apply_bios_override "$dest"; then
             return 1
         fi
+        # Read it back rather than trusting the append: without this line
+        # the installed system would keep device = "nodev" and GRUB would
+        # have nowhere to write -- discovered only after the reboot.
+        if ! grep -q 'boot.loader.grub.device = lib.mkForce' "$dest"; then
+            error "The BIOS GRUB override is missing from the generated hardware configuration."
+            return 1
+        fi
     fi
 
     # Parse-check immediately: a syntactically broken hardware configuration
@@ -2887,10 +3601,17 @@ ci_generate_hardware() {
 
     # A flake built from a git tree ignores untracked files. Staging this
     # guarantees the build sees the freshly generated file rather than
-    # whatever UUIDs happen to be committed.
-    if [[ -d "$CI_DEST/.git" ]] && command -v git >/dev/null 2>&1; then
-        if ! git -C "$CI_DEST" -c safe.directory='*' add -A >/dev/null 2>&1; then
-            warning "git add failed; the flake may not see the new hardware configuration."
+    # whatever UUIDs happen to be committed. If staging cannot work, the
+    # only correct fallback is to stop being a git tree at all: dropping
+    # .git makes every file on disk visible, whatever the index says.
+    if [[ -d "$CI_DEST/.git" ]]; then
+        if command -v git >/dev/null 2>&1 &&
+            git -C "$CI_DEST" -c safe.directory='*' add -A >/dev/null 2>&1; then
+            info "Staged the generated hardware configuration for the flake."
+        else
+            warning "Could not stage the new hardware configuration for git."
+            warning "Dropping .git so the flake reads every file as a plain path."
+            rm -rf "$CI_DEST/.git"
         fi
     fi
 
@@ -2957,6 +3678,19 @@ ci_fs_block() {
   ' "$1"
 }
 
+# UUID of a block device. `-p` probes the device itself rather than the
+# blkid cache, which can still hold the pre-format answer from before mkfs
+# ran; the plain cache lookup stays as a fallback for whatever libblkid
+# cannot probe directly. Run as root either way.
+ci_blkid_uuid() {
+    local u
+    u="$(blkid -p -o value -s UUID "$1" 2>/dev/null || true)"
+    if [[ -z "$u" ]]; then
+        u="$(blkid -s UUID -o value "$1" 2>/dev/null || true)"
+    fi
+    printf '%s' "$u"
+}
+
 ci_fs_uuid() {
     ci_fs_block "$1" "$2" | sed -nE 's|.*by-uuid/([^"]+)".*|\1|p' | head -n1
 }
@@ -2983,7 +3717,7 @@ ci_verify_hardware() {
     v_ok "hardware-configuration.nix present"
 
     local want_root want_boot got_root got_boot
-    want_root="$(blkid -s UUID -o value "$CI_ROOT_PART" 2>/dev/null || printf '')"
+    want_root="$(ci_blkid_uuid "$CI_ROOT_PART")"
     got_root="$(ci_fs_uuid "$f" "/")"
 
     if [[ -n "$want_root" && "$got_root" == "$want_root" ]]; then
@@ -2999,7 +3733,7 @@ ci_verify_hardware() {
     fi
 
     if [[ "$CI_FIRMWARE" == "UEFI" ]]; then
-        want_boot="$(blkid -s UUID -o value "$CI_ESP" 2>/dev/null || printf '')"
+        want_boot="$(ci_blkid_uuid "$CI_ESP")"
         got_boot="$(ci_fs_uuid "$f" "/boot")"
 
         if [[ -n "$want_boot" && "$got_boot" == "$want_boot" ]]; then
@@ -3192,8 +3926,8 @@ ci_cleanup_installer_artifacts() {
     section "Installer cleanup"
 
     if [[ "$CI_DRY_RUN" -eq 1 ]]; then
-        run_cmd "rm -rf $CI_TARGET/.nix-cache $CI_TARGET/.setup-tmp"
-        run_cmd "rm -f $CI_TARGET/.setup-swapfile"
+        run_cmd "rm -rf $CI_TARGET/.nix-cache $CI_TARGET/.setup-tmp $CI_TARGET/.nix-tmp"
+        run_cmd "rm -f $CI_TARGET/.setup-swapfile $CI_TARGET/.nixos-build-swap"
         info "Installer-only files will be removed from the target."
         return 0
     fi
@@ -3519,6 +4253,19 @@ ci_final_verify() {
         v_fail "missing $CI_TARGET/etc/NIXOS; nixos-install never completed"
     fi
 
+    # ci_cleanup_installer_artifacts runs before this verification, so what
+    # the installer left behind must be gone by now: a stray swapfile or
+    # cache directory would survive into the installed system.
+    local artifact left=()
+    for artifact in .setup-swapfile .setup-tmp .nix-cache .nix-tmp .nixos-build-swap; do
+        if [[ -e "$CI_TARGET/$artifact" ]]; then left+=("$artifact"); fi
+    done
+    if [[ "${#left[@]}" -eq 0 ]]; then
+        v_ok "no installer scratch files left on the target"
+    else
+        v_fail "installer scratch files still present: ${left[*]}"
+    fi
+
     local got_host
     got_host="$(cat "$CI_TARGET/etc/hostname" 2>/dev/null || true)"
     if [[ -n "$CI_EXPECT_HOSTNAME" ]]; then
@@ -3640,32 +4387,52 @@ ci_review() {
     info "                                and:  INSTALL SUNFLOWER"
 }
 
-# Dry run: exercise every read-only part of the pipeline against a temporary
-# copy of the repository, on any machine, with no disk effects at all.
-ci_dryrun_validate() {
+# Copy the repository to a scratch directory, apply the identity answers to
+# the copy, parse variables.nix and evaluate the flake -- read-only with
+# respect to the real tree. Called by the dry run, and by a real run BEFORE
+# anything is erased, so an unevaluable configuration is found while it
+# still costs nothing. The caller decides what a non-zero return means.
+#
+# `.git` handling is decided here rather than guessed at copy time:
+#
+#   * What nix's git fetcher sees comes from the index, not from the disk,
+#     so files that exist but were never added (a plain unzip, an rsync, a
+#     fresh extraction) are invisible to it. `git add -A` inside the copy
+#     first: staged content is what gets fetched, and staged means every
+#     file on disk.
+#   * If evaluation still fails while .git is present, the copy is checked
+#     again WITHOUT it. A plain path fetches every file regardless of git
+#     state. When that is what works, CI_STRIP_GIT=1 records that the
+#     target copy must be placed the same way, by ci_place_repo.
+#
+# Returns 1 when the configuration does not evaluate; the scratch copy is
+# then left in place so the errors can be inspected.
+ci_validate_config_copy() {
+    local tmp copy k vars failed=0
+
     section "Validating the configuration (read-only)"
 
-    local tmp copy k vars failed=0
     tmp="$(mktemp -d)" || {
-        warning "No temporary directory; validation skipped."
-        return 0
+        warning "No temporary directory; cannot validate."
+        return 1
     }
     copy="$tmp/$REPO_NAME"
 
     info "Copying the repository to ${tmp} for validation."
     if ! cp -a "$ROOT/." "$copy/" 2>/dev/null; then
-        warning "Could not copy the repository; validation skipped."
+        warning "Could not copy the repository; cannot validate."
         rm -rf "$tmp"
-        return 0
+        return 1
     fi
     rm -rf "$copy/.setup-backups"
 
+    if [[ -d "$copy/.git" ]] && command -v git >/dev/null 2>&1; then
+        git config --global --add safe.directory "$copy" 2>/dev/null || true
+        git -C "$copy" add -A >/dev/null 2>&1 || true
+    fi
+
     vars="$copy/lib/variables.nix"
     if [[ -f "$vars" ]]; then
-        if [[ -d "$copy/.git" ]] && command -v git >/dev/null 2>&1; then
-            git config --global --add safe.directory "$copy" 2>/dev/null || true
-            git -C "$copy" add -A >/dev/null 2>&1 || true
-        fi
         for k in "${CI_ID_KEYS[@]}"; do
             if [[ -z "${CI_ID[$k]-}" ]]; then
                 v_info "no answer for '$k' yet; the existing file is left as-is"
@@ -3704,16 +4471,49 @@ ci_dryrun_validate() {
     if command -v nix >/dev/null 2>&1 && ci_check_network >/dev/null 2>&1; then
         if nix "${CI_NIX_FLAGS[@]}" flake check --no-build "$copy" >/dev/null 2>&1; then
             v_ok "flake evaluates with the new identity"
+            # Proven with .git (when there is one): keep it, subject to the
+            # health check ci_place_repo still applies.
+            CI_STRIP_GIT=0
+        elif [[ -d "$copy/.git" ]]; then
+            v_info "flake check failed with .git present; retrying without it"
+            rm -rf "$copy/.git"
+            if nix "${CI_NIX_FLAGS[@]}" flake check --no-build "$copy" >/dev/null 2>&1; then
+                v_ok "flake evaluates as a plain path; the git state was the problem"
+                CI_STRIP_GIT=1
+            else
+                v_fail "flake check failed with and without .git"
+                info "Inspect the copy, or re-run showing the errors: nix flake check --no-build $copy"
+                failed=1
+            fi
         else
             v_fail "flake check failed on the temporary copy"
-            info "Re-run showing the errors: nix flake check --no-build $tmp"
+            info "Inspect the copy, or re-run showing the errors: nix flake check --no-build $copy"
             failed=1
         fi
+        # No .git in the copy any more (never had one, or just stripped):
+        # the target copy must be placed the same way.
+        if [[ ! -d "$copy/.git" ]]; then CI_STRIP_GIT=1; fi
     else
         v_info "flakes/network unavailable here; flake evaluation not tested"
     fi
 
-    rm -rf "$tmp"
+    if [[ "$failed" -eq 0 ]]; then
+        rm -rf "$tmp"
+        return 0
+    fi
+    # Keep the copy: "flake check failed on a directory that no longer
+    # exists" is not a useful message.
+    v_info "scratch copy kept at $tmp for inspection"
+    return 1
+}
+
+# Dry run: exercise every read-only part of the pipeline against a temporary
+# copy of the repository, on any machine, with no disk effects at all.
+ci_dryrun_validate() {
+    # Problems are reported by the shared validator; a dry run always ends
+    # with the plan summary and a return 0 -- nothing changed either way.
+    local failed=0
+    ci_validate_config_copy || failed=1
 
     echo
     section "What a real run would verify"
@@ -3770,10 +4570,11 @@ clean_install() {
         fi
     fi
 
-    # The ISO does not enable flakes, and nixos-install shells out to nix
-    # itself, so a flag on our own calls is not enough. NIX_CONFIG reaches
-    # every nix invocation in this process tree, including that one.
-    export NIX_CONFIG="experimental-features = nix-command flakes"
+    # NIX_CONFIG (experimental-features = nix-command flakes) is exported at
+    # the top of this file for the whole process tree, so nixos-install and
+    # nixos-enter inherit it too. Re-asserted here only as a reminder that
+    # every nix call below depends on it.
+    : "${NIX_CONFIG:?flakes must be enabled before the installer runs}"
 
     # --- pre-destructive: every failure here cancels cleanly (return 0) ---
     CI_PHASE="preflight"
@@ -3809,8 +4610,25 @@ clean_install() {
         return 0
     fi
 
+    # The configuration is proved to evaluate BEFORE anything is erased,
+    # not after the disk is already gone. A missing answer, a typo in
+    # variables.nix or a flake that only breaks on this machine surfaces
+    # here, where it is still free to fix.
+    if ! ci_validate_config_copy; then
+        warning "Installation cancelled; nothing was changed."
+        return 0
+    fi
+
     if ! ci_confirm_destroy; then
         warning "Aborted; nothing was changed."
+        return 0
+    fi
+
+    # Between the listing and this point the machine kept running: a desktop
+    # may have auto-mounted a partition, a USB may have been re-plugged.
+    # Re-derive everything from the kernel, then decide again.
+    if ! ci_verify_target_disk; then
+        warning "Installation cancelled; nothing was changed."
         return 0
     fi
 
@@ -3837,6 +4655,7 @@ clean_install() {
     ci_validate_flake
 
     CI_PHASE="install"
+    ci_check_space
     ci_build_system
     ci_install
 
@@ -3847,10 +4666,12 @@ clean_install() {
     ci_fix_ownership
     ci_set_passwords
 
+    # Installer droppings come off first: .setup-swapfile and friends must
+    # not be counted or verified as part of the finished system.
+    ci_cleanup_installer_artifacts
+
     CI_PHASE="verify"
     ci_final_verify
-
-    ci_cleanup_installer_artifacts
     CI_PHASE="done"
 
     echo
@@ -3962,6 +4783,7 @@ Usage:
 
   ./setup.sh clean-install           Fresh install (live installer ISO only)
   ./setup.sh clean-install --dry-run Plan a fresh install, change nothing
+  ./setup.sh validate                Alias of clean-install --dry-run
   ./setup.sh verify-boot             Re-verify an installation mounted at /mnt
   ./setup.sh configure               Identity pass on an existing install
   ./setup.sh rebuild                 Validate + rebuild/switch
@@ -3993,6 +4815,10 @@ Typical life of a machine:
 Clone once, if this checkout is all you have:
   git clone $REPO_URL && cd $REPO_NAME && ./setup.sh
 
+A plain download or copy works just as well -- .git is never required, for
+installing, rebuilding or updating. What git does provide (history, git
+pull) is skipped gracefully when it is missing.
+
 Nothing needs installing first. The installer ISO already carries every
 tool this uses, and preflight says so before anything is touched.
 
@@ -4013,7 +4839,16 @@ main() {
         ;;
     clean-install | clean_install)
         shift || true
+        if [[ $# -gt 1 ]]; then
+            error "Unexpected extra arguments: ${*:2}"
+            info "Usage: ./setup.sh clean-install [--dry-run]"
+            exit 2
+        fi
         ci_install_entry "${1:-}"
+        ;;
+    # The plan, without the installation: same flow, --dry-run.
+    validate | plan)
+        ci_install_entry --dry-run
         ;;
     configure | identity) install_flow ;;
     verify-boot | verify-install) verify_boot ;;
