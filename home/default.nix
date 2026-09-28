@@ -19,6 +19,7 @@ in
     ./obsidian
     ./theme
     ./mpv
+    ./thunar
   ];
 
   home.username = vars.user.username;

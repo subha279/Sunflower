@@ -1,10 +1,5 @@
--- =============================================================================
 -- Window Rules
--- =============================================================================
-
--- -----------------------------------------------------------------------------
 -- 1. Global
--- -----------------------------------------------------------------------------
 
 -- Suppress Maximize Requests
 hl.window_rule({
@@ -21,7 +16,7 @@ hl.window_rule({
 	center = true,
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- XWayland Dragging Fix
@@ -38,10 +33,7 @@ hl.window_rule({
 	no_focus = true,
 })
 
--- -----------------------------------------------------------------------------
 -- 2. Generic Dialogs
--- -----------------------------------------------------------------------------
-
 -- File Choosers
 hl.window_rule({
 	name = "file-chooser-dialogs",
@@ -113,13 +105,10 @@ hl.window_rule({
 	size = "800 600",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
--- -----------------------------------------------------------------------------
 -- 3. System and Shell UI
--- -----------------------------------------------------------------------------
-
 -- Polkit Authentication Agent
 hl.window_rule({
 	name = "polkit-agent",
@@ -131,7 +120,7 @@ hl.window_rule({
 	size = "480 260",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- XDG Desktop Portal
@@ -143,7 +132,7 @@ hl.window_rule({
 	size = "700 400",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- Bluetooth Manager
@@ -156,7 +145,7 @@ hl.window_rule({
 	rounding = 10,
 	opacity = "0.90 0.90",
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 hl.window_rule({
@@ -170,7 +159,7 @@ hl.window_rule({
 	rounding = 10,
 	opacity = "0.95 0.95",
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- NetworkManager Connection Editor
@@ -183,7 +172,7 @@ hl.window_rule({
 	rounding = 10,
 	opacity = "0.95 0.95",
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- Pavucontrol
@@ -196,7 +185,7 @@ hl.window_rule({
 	rounding = 10,
 	opacity = "0.97 0.97",
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- Appearance Tools
@@ -208,13 +197,10 @@ hl.window_rule({
 	size = "900 650",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
--- -----------------------------------------------------------------------------
 -- 4. Applications
--- -----------------------------------------------------------------------------
-
 -- Zen Browser
 hl.window_rule({
 	name = "zen-browser",
@@ -231,7 +217,7 @@ hl.window_rule({
 	size = "700 700",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 hl.window_rule({
@@ -263,7 +249,7 @@ hl.window_rule({
 	size = "800 550",
 	rounding = 10,
 	dim_around = true,
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- Image Viewers & Annotation
@@ -293,7 +279,7 @@ hl.window_rule({
 	size = "1200 800",
 	rounding = 10,
 	opacity = "1.0 override 1.0 override",
-	animation = "popin",
+	animation = "popin 90%",
 })
 
 -- Editors and Office

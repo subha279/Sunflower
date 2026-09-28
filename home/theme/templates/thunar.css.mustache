@@ -1,0 +1,661 @@
+/* ============================================================
+ * SUNFLOWER — THUNAR
+ *
+ * This block is appended to the generated gtk-3.0/gtk.css, so the
+ * @sunflower_* colors defined at the top of that file are available.
+ *
+ * Everything is scoped to `.thunar`, the style class Thunar puts on
+ * its main window (see thunar_window_init in thunar-window.c), so no
+ * other GTK 3 application is affected.
+ *
+ * Thunar 4.20 widget map:
+ *
+ *   window.thunar
+ *    ├─ menubar                      optional, hidden by default
+ *    ├─ headerbar                    client-side decorations
+ *    │   └─ toolbar                  navigation · location · actions
+ *    │       └─ .path-bar            breadcrumb (.location-button)
+ *    ├─ paned
+ *    │   ├─ .sidebar (.shortcuts-pane) └─ treeview
+ *    │   └─ paned_right
+ *    │       ├─ view_box
+ *    │       │   ├─ paned_notebooks → notebook (tabs)
+ *    │       │   │   └─ .standard-view (iconview | treeview)
+ *    │       │   ├─ .preview-pane
+ *    │       │   └─ statusbar
+ *    │       └─ ...
+ * ============================================================ */
+
+/* ------------------------------------------------------------
+ * Window
+ * ------------------------------------------------------------ */
+
+.thunar,
+.thunar.background {
+    background-color: @sunflower_background;
+    color: @sunflower_text;
+}
+
+/* ------------------------------------------------------------
+ * Headerbar (client-side decorations)
+ * ------------------------------------------------------------ */
+
+.thunar headerbar,
+.thunar headerbar:backdrop {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text;
+
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+
+    min-height: 48px;
+    padding: 0 6px;
+}
+
+.thunar headerbar .title {
+    color: @sunflower_text;
+    font-weight: 600;
+}
+
+.thunar headerbar .subtitle {
+    color: @sunflower_text_secondary;
+    font-weight: 400;
+}
+
+/* ------------------------------------------------------------
+ * Menubar (hidden by default, restored from View → Menubar)
+ * ------------------------------------------------------------ */
+
+.thunar menubar {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+
+    padding: 3px 6px;
+    min-height: 0;
+}
+
+.thunar menubar > menuitem {
+    background-color: transparent;
+    color: @sunflower_text_secondary;
+
+    border-radius: 7px;
+    padding: 4px 10px;
+}
+
+.thunar menubar > menuitem:hover {
+    background-color: @sunflower_surface_hover;
+    color: @sunflower_text;
+}
+
+.thunar menubar > menuitem:active,
+.thunar menubar > menuitem:checked {
+    background-color: @sunflower_accent;
+    color: @sunflower_background;
+}
+
+/* ------------------------------------------------------------
+ * Toolbar
+ * ------------------------------------------------------------ */
+
+.thunar toolbar,
+.thunar .primary-toolbar {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text;
+
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+
+    padding: 4px 4px;
+    min-height: 0;
+}
+
+/* Inside the CSD headerbar the toolbar sits on the headerbar surface. */
+.thunar headerbar toolbar,
+.thunar headerbar .primary-toolbar {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+.thunar headerbar button,
+.thunar toolbar button,
+.thunar .primary-toolbar button,
+.thunar headerbar menu button,
+.thunar toolbar menu button {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 8px;
+    padding: 5px 7px;
+    min-height: 26px;
+    min-width: 26px;
+
+    text-shadow: none;
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.thunar headerbar button:hover,
+.thunar toolbar button:hover,
+.thunar .primary-toolbar button:hover,
+.thunar headerbar menu button:hover,
+.thunar toolbar menu button:hover {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    color: @sunflower_text;
+    border: none;
+    box-shadow: none;
+}
+
+.thunar headerbar button:active,
+.thunar toolbar button:active,
+.thunar .primary-toolbar button:active,
+.thunar headerbar button:checked,
+.thunar toolbar button:checked,
+.thunar .primary-toolbar button:checked {
+    background-color: @sunflower_accent;
+    background-image: none;
+    color: @sunflower_background;
+    border: none;
+}
+
+.thunar headerbar button:disabled,
+.thunar toolbar button:disabled,
+.thunar .primary-toolbar button:disabled {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_muted;
+    border: none;
+}
+
+.thunar headerbar button image,
+.thunar toolbar button image {
+    color: inherit;
+    -gtk-icon-shadow: none;
+}
+
+.thunar toolbar separator {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    min-width: 1px;
+    min-height: 1px;
+}
+
+/* Recessed well for linked groups (breadcrumb, view switcher). */
+.thunar toolbar .linked,
+.thunar headerbar .linked {
+    background-color: @sunflower_background;
+    background-image: none;
+    border: none;
+    border-radius: 10px;
+    box-shadow: none;
+    padding: 2px;
+}
+
+.thunar toolbar .linked button,
+.thunar headerbar .linked button {
+    border-radius: 7px;
+}
+
+/* ------------------------------------------------------------
+ * Location bar — breadcrumb path
+ * ------------------------------------------------------------ */
+
+.thunar .path-bar {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+}
+
+.thunar .path-bar .location-button,
+.thunar .path-bar-button {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 7px;
+    padding: 4px 10px;
+    min-height: 24px;
+    min-width: 0;
+
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.thunar .path-bar .location-button:hover,
+.thunar .path-bar-button:hover {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    color: @sunflower_text;
+    border: none;
+}
+
+.thunar .path-bar .location-button:active,
+.thunar .path-bar .location-button:checked,
+.thunar .path-bar-button:active,
+.thunar .path-bar-button:checked {
+    background-color: @sunflower_accent;
+    background-image: none;
+    color: @sunflower_background;
+    border: none;
+}
+
+.thunar .path-bar .location-button:disabled,
+.thunar .path-bar-button:disabled {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_muted;
+    border: none;
+}
+
+/* Keep focus visible on the path bar without the loud global focus ring;
+ * the current segment already reads as "checked". */
+.thunar .path-bar .location-button:focus,
+.thunar .path-bar-button:focus {
+    border: none;
+    box-shadow: inset 0 0 0 1px alpha(@sunflower_accent, 0.55);
+}
+
+.thunar .path-bar .location-button:checked:focus,
+.thunar .path-bar .location-button:active:focus,
+.thunar .path-bar-button:checked:focus,
+.thunar .path-bar-button:active:focus {
+    border: none;
+    box-shadow: none;
+}
+
+/* Location bar in entry mode (and while searching). */
+.thunar toolbar entry {
+    background-color: @sunflower_background;
+    background-image: none;
+    color: @sunflower_text;
+
+    border: 1px solid @sunflower_surface_hover;
+    border-radius: 999px;
+    box-shadow: none;
+
+    padding: 5px 12px;
+    min-height: 0;
+
+    transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.thunar toolbar entry:hover {
+    border-color: @sunflower_text_muted;
+}
+
+.thunar toolbar entry:focus {
+    border-color: @sunflower_accent;
+    box-shadow: 0 0 0 2px alpha(@sunflower_accent, 0.25);
+}
+
+.thunar toolbar entry selection {
+    background-color: alpha(@sunflower_accent, 0.35);
+    color: @sunflower_text;
+}
+
+/* ------------------------------------------------------------
+ * Sidebar — shortcuts / tree
+ * ------------------------------------------------------------ */
+
+.thunar .sidebar,
+.thunar .shortcuts-pane {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    border-right: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+}
+
+.thunar .sidebar .view,
+.thunar .shortcuts-pane .view,
+.thunar .sidebar treeview,
+.thunar .shortcuts-pane treeview,
+.thunar .sidebar .view:hover,
+.thunar .shortcuts-pane .view:hover {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    box-shadow: none;
+}
+
+.thunar .sidebar .view:selected,
+.thunar .shortcuts-pane .view:selected {
+    background-color: @sunflower_accent;
+    background-image: none;
+    color: @sunflower_background;
+}
+
+/* ------------------------------------------------------------
+ * File views
+ * ------------------------------------------------------------ */
+
+.thunar .standard-view,
+.thunar .view,
+.thunar iconview,
+.thunar treeview.view,
+.thunar .view:hover,
+.thunar iconview:hover,
+.thunar treeview.view:hover {
+    background-color: @sunflower_background;
+    background-image: none;
+    color: @sunflower_text;
+}
+
+/* Icon and compact view: a soft accent pill instead of a solid block,
+ * so file names stay readable on top of it. */
+.thunar iconview:selected,
+.thunar iconview:selected:focus {
+    background-color: alpha(@sunflower_accent, 0.28);
+    background-image: none;
+    border-radius: 8px;
+    color: @sunflower_text;
+}
+
+.thunar iconview text:selected,
+.thunar iconview:selected text {
+    background-color: transparent;
+    color: @sunflower_text;
+}
+
+/* Details view keeps a solid selection for contrast. */
+.thunar treeview.view:selected,
+.thunar treeview.view:selected:focus {
+    background-color: @sunflower_accent;
+    background-image: none;
+    color: @sunflower_background;
+}
+
+/* Column headers */
+.thunar treeview.view header {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+}
+
+.thunar treeview.view header button {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 6px;
+    margin: 2px;
+    padding: 4px 8px;
+
+    font-weight: 500;
+    text-shadow: none;
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.thunar treeview.view header button:hover {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    color: @sunflower_text;
+}
+
+.thunar treeview.view header button:active,
+.thunar treeview.view header button:checked {
+    background-color: @sunflower_accent;
+    background-image: none;
+    color: @sunflower_background;
+}
+
+.thunar treeview.view header:backdrop,
+.thunar treeview.view header button:backdrop {
+    color: @sunflower_text_muted;
+}
+
+.thunar treeview.view separator {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+}
+
+/* ------------------------------------------------------------
+ * Tabs
+ * ------------------------------------------------------------ */
+
+.thunar notebook,
+.thunar notebook > header {
+    background-color: @sunflower_background;
+    background-image: none;
+    color: @sunflower_text;
+}
+
+.thunar notebook > header {
+    background-color: @sunflower_surface;
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+    padding: 0 6px;
+    min-height: 0;
+}
+
+.thunar notebook > header > tabs > tab {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_muted;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 8px 8px 0 0;
+    margin: 6px 3px 0 3px;
+    padding: 6px 10px;
+    min-height: 0;
+
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.thunar notebook > header > tabs > tab:hover {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    color: @sunflower_text;
+}
+
+/* Active tab bleeds into the page below it. */
+.thunar notebook > header > tabs > tab:checked {
+    background-color: @sunflower_background;
+    background-image: none;
+    color: @sunflower_text;
+    margin-bottom: -1px;
+    padding-bottom: 7px;
+}
+
+.thunar notebook > header > tabs > tab label {
+    color: inherit;
+}
+
+.thunar notebook > header > tabs > tab button {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_muted;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 6px;
+    padding: 2px;
+    min-height: 16px;
+    min-width: 16px;
+}
+
+.thunar notebook > header > tabs > tab button:hover {
+    background-color: alpha(@sunflower_text, 0.16);
+    background-image: none;
+    color: @sunflower_text;
+}
+
+.thunar notebook > header > tabs > arrow {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_muted;
+    border: none;
+    box-shadow: none;
+}
+
+/* ------------------------------------------------------------
+ * Statusbar
+ * ------------------------------------------------------------ */
+
+.thunar statusbar {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_muted;
+
+    border: none;
+    border-top: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+
+    padding: 3px 10px;
+    font-size: 0.92em;
+}
+
+.thunar statusbar frame,
+.thunar statusbar frame > border {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+
+.thunar statusbar label {
+    background-color: transparent;
+    color: @sunflower_text_muted;
+}
+
+.thunar statusbar button {
+    background-color: transparent;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    box-shadow: none;
+
+    border-radius: 6px;
+    padding: 2px 6px;
+    min-height: 0;
+    min-width: 0;
+}
+
+.thunar statusbar button:hover {
+    background-color: @sunflower_surface_hover;
+    background-image: none;
+    color: @sunflower_text;
+}
+
+/* ------------------------------------------------------------
+ * Paned handles — hairline that lights up on hover
+ * ------------------------------------------------------------ */
+
+.thunar paned > separator:hover,
+.thunar paned > separator:selected {
+    background-image: image(@sunflower_accent);
+}
+
+/* ------------------------------------------------------------
+ * Scrollbars
+ * ------------------------------------------------------------ */
+
+.thunar scrollbar,
+.thunar scrollbar trough {
+    background-color: transparent;
+    background-image: none;
+}
+
+.thunar scrollbar slider {
+    background-color: alpha(@sunflower_text, 0.30);
+    background-image: none;
+    border: none;
+    border-radius: 999px;
+
+    min-width: 6px;
+    min-height: 6px;
+    margin: 3px;
+
+    transition: background-color 120ms ease-out;
+}
+
+.thunar scrollbar slider:hover {
+    background-color: alpha(@sunflower_text, 0.55);
+}
+
+.thunar scrollbar slider:active {
+    background-color: @sunflower_accent;
+}
+
+/* ------------------------------------------------------------
+ * Selection rubber band
+ * ------------------------------------------------------------ */
+
+.thunar rubberband,
+.thunar treeview.view rubberband,
+.thunar iconview rubberband {
+    background-color: alpha(@sunflower_accent, 0.18);
+    border: 1px solid alpha(@sunflower_accent, 0.75);
+    border-radius: 4px;
+}
+
+/* ------------------------------------------------------------
+ * Banners, preview pane, spinner
+ * ------------------------------------------------------------ */
+
+.thunar infobar {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    border-bottom: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+}
+
+.thunar infobar label {
+    color: @sunflower_text_secondary;
+}
+
+.thunar .preview-pane {
+    background-color: @sunflower_surface;
+    background-image: none;
+    color: @sunflower_text_secondary;
+
+    border: none;
+    border-left: 1px solid @sunflower_surface_hover;
+    box-shadow: none;
+}
+
+.thunar .preview-pane label {
+    color: @sunflower_text_secondary;
+}
+
+.thunar spinner {
+    color: @sunflower_accent;
+}
