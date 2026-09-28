@@ -31,7 +31,8 @@ let
     inherit lib themeData themeNames;
   };
 
-  iconPackage = pkgs.colloid-icon-theme;
+  pkgFromPath = path: lib.getAttrFromPath (lib.splitString "." path) pkgs;
+  iconPackage = pkgFromPath themeData.global.icons.package;
   iconThemeName = themeData.global.icons.name;
 
   themeList = builtins.concatStringsSep "\n" (

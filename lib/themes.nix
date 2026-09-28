@@ -23,20 +23,20 @@ let
 
     # Icons
     icons = {
-      name = "Colloid-Dark";
-      package = "colloid-icon-theme";
+      name = "Tela-circle-dark";
+      package = "tela-circle-icon-theme";
     };
 
     # Cursor
     cursor = {
-      name = "phinger-cursors-dark";
-      package = "phinger-cursors";
-      size = 30;
+      name = "Bibata-Modern-Classic";
+      package = "pkgs.bibata-cursors";
+      size = 24; # 24 or 32 scale best on modern high-DPI displays
     };
 
     # UI
     ui = {
-      borderWidth = 0;
+      borderWidth = 2;
       radius = 15;
       radiusSmall = 10;
       radiusLarge = 18;
