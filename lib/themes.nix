@@ -90,8 +90,27 @@ let
     ) colorschemeFiles
   );
 
+  theme = themes.${global.activeTheme};
+
+  # Polarity Detection (ITU-R BT.601 perceived brightness of the background).
+  hexToInt = s: (builtins.fromTOML "v = 0x${s}").v;
+  bgHex =
+    if builtins.substring 0 1 theme.colors.background == "#" then
+      builtins.substring 1 6 theme.colors.background
+    else
+      theme.colors.background;
+
+  bgBrightness =
+    (
+      hexToInt (builtins.substring 0 2 bgHex) * 299
+      + hexToInt (builtins.substring 2 2 bgHex) * 587
+      + hexToInt (builtins.substring 4 2 bgHex) * 114
+    )
+    / 1000;
+
 in
 {
-  inherit global themes;
-  theme = themes.${global.activeTheme};
+  inherit global themes theme;
+
+  polarity = if bgBrightness > 127 then "light" else "dark";
 }

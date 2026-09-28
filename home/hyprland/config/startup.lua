@@ -7,6 +7,11 @@ hl.on("hyprland.start", function()
 			.. "XDG_SESSION_TYPE "
 			.. "XDG_SESSION_DESKTOP "
 			.. "HYPRLAND_INSTANCE_SIGNATURE "
+			.. "QT_STYLE_OVERRIDE "
+			.. "QT_QPA_PLATFORMTHEME "
+			.. "XCURSOR_THEME "
+			.. "XCURSOR_SIZE "
+			.. "GDK_BACKEND "
 			.. "&& systemctl --user start hyprland-session.target"
 	)
 

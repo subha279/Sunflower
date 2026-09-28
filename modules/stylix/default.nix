@@ -15,21 +15,6 @@ let
   # Resolve DOTTED package paths such as "maple-mono.truetype".
   pkgFromPath = path: lib.getAttrFromPath (lib.splitString "." path) pkgs;
 
-  # Polarity Detection
-  hexToInt = s: (builtins.fromTOML "v = 0x${s}").v;
-  bgHex = hex colors.background;
-
-  # Perceived brightness, ITU-R BT.601.
-  bgBrightness =
-    (
-      hexToInt (builtins.substring 0 2 bgHex) * 299
-      + hexToInt (builtins.substring 2 2 bgHex) * 587
-      + hexToInt (builtins.substring 4 2 bgHex) * 114
-    )
-    / 1000;
-
-  isLight = bgBrightness > 127;
-
   # Central Fonts
   interfaceFont = pkgFromPath global.fonts.interface.package;
   terminalFont = pkgFromPath global.fonts.terminal.package;
@@ -48,8 +33,8 @@ in
     # Sunflower explicitly owns application-specific theming.
     autoEnable = false;
 
-    # Derived, not hardcoded. See Polarity Detection above.
-    polarity = if isLight then "light" else "dark";
+    # Derived, not hardcoded. See Polarity Detection in lib/themes.nix.
+    polarity = themeData.polarity;
 
     # STATIC SUNFLOWER COLOR SOURCE
     base16Scheme = {

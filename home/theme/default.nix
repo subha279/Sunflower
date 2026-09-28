@@ -35,6 +35,10 @@ let
   iconPackage = pkgFromPath themeData.global.icons.package;
   iconThemeName = themeData.global.icons.name;
 
+  polarity = themeData.polarity;
+  gtkThemeName = if polarity == "dark" then "adw-gtk3-dark" else "adw-gtk3";
+  gtkThemePackage = pkgs.adw-gtk3;
+
   themeList = builtins.concatStringsSep "\n" (
     map (
       themeId:
@@ -70,10 +74,29 @@ in
   gtk = {
     enable = true;
 
+    font = {
+      name = themeData.global.fonts.interface.name;
+      size = themeData.global.ui.fontSize;
+    };
+
+    theme = {
+      package = gtkThemePackage;
+      name = gtkThemeName;
+    };
+
+    colorScheme = polarity;
+
     iconTheme = {
       package = iconPackage;
       name = iconThemeName;
     };
+  };
+
+  systemd.user.sessionVariables = {
+    QT_STYLE_OVERRIDE = "kvantum";
+    QT_QPA_PLATFORMTHEME = "gtk2";
+    XCURSOR_THEME = themeData.global.cursor.name;
+    XCURSOR_SIZE = themeData.global.cursor.size;
   };
 
   stylix.targets.gtk.enable = false;

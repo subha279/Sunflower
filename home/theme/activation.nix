@@ -83,6 +83,7 @@ in
       fi
 
       ln -sfn "$theme_dir/themes/$selected/kvantum" "$kvantum_theme"
+      printf '%s\n' '[General]' 'theme=Base16Kvantum' > "$kvantum_dir/kvantum.kvconfig"
     fi
   '';
 }
