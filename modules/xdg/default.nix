@@ -1,16 +1,10 @@
-{ pkgs, ... }:
+{ ... }:
 
 {
   # XDG
-
   xdg = {
     portal = {
       enable = true;
-
-      extraPortals = with pkgs; [
-        xdg-desktop-portal-gtk
-        xdg-desktop-portal-hyprland
-      ];
     };
 
     mime.enable = true;
@@ -19,7 +13,6 @@
     menus.enable = true;
 
     # Default Applications
-
     mime.defaultApplications =
       let
         browser = "zen.desktop";

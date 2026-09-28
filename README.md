@@ -49,7 +49,7 @@
 
 ### 🎨 Theme Engine
 
-- **Centralized Palette Engine**: Define colors once in `lib/colorschemes/`, dynamic generation propagates to Lua, JSON, Kitty, tmux, Starship, GTK, and Kvantum.
+- **Centralized Palette Engine**: Define colors once in `lib/themes/`, dynamic generation propagates to Lua, JSON, Kitty, tmux, Starship, GTK, and Kvantum.
 - **Instant Runtime Switching**: Press <kbd>SUPER</kbd> + <kbd>C</kbd> to switch colors dynamically without rebuilding your system.
 - **Stylix Base**: Manages Base16 schemes, fonts, and cursors cleanly while disabling intrusive GTK/Qt overrides.
 
@@ -57,7 +57,7 @@
 
 - **Kitty & Tmux**: Dynamic theme inclusion (`active-kitty.conf` & `active-tmux.conf`) with `fzf` and `zoxide` shell integration.
 - **Zsh & Starship**: Custom prompt exports directly into generated `active-starship.toml`.
-- **Neovim Ecosystem**: Treesitter, Telescope, completion plugins, and 18 LSP configurations under `home/neovim/config/lsp/`.
+- **Neovim Ecosystem**: Treesitter, Telescope, completion plugins, and 17 LSP configurations under `home/neovim/config/lsp/`.
 
 ### ⚙️ System Architecture
 
@@ -110,8 +110,8 @@ flake.nix (.#sunflower)
 lib/variables.nix ── Identity & Hardware IDs (Single source of truth)
 lib/themes.nix ─┬── global.activeTheme ──► home/theme generators
                 │                           ├─ active-theme / themes/*.json + *.lua
-lib/colorschemes/                           ├─ active-kitty.conf / active-tmux.conf
-(7 palettes)                                ├─ active-starship.toml
+lib/themes/                                 ├─ active-kitty.conf / active-tmux.conf
+(5 palettes)                                ├─ active-starship.toml
                                             └─ GTK / Kvantum assets
                                                        │
               ┌────────────────────────────────────────┘
@@ -125,13 +125,13 @@ lib/colorschemes/                           ├─ active-kitty.conf / active-tm
 
 ## 🎨 Theme Engine
 
-Centralized controls lie within `lib/themes.nix` and `lib/colorschemes/`:
+Centralized controls lie within `lib/themes.nix` and the palettes it loads from `lib/themes/`:
 
 | Action                  | How to Apply                                  | Effect                                                |
 | ----------------------- | --------------------------------------------- | ----------------------------------------------------- |
 | **Change Palette**      | Press <kbd>SUPER</kbd> + <kbd>C</kbd>         | Live runtime theme swap across terminal, shell, & bar |
 | **Set Default Theme**   | Edit `global.activeTheme` in `lib/themes.nix` | Persists default palette across system rebuilds       |
-| **Create Custom Theme** | Add `.nix` palette in `lib/colorschemes/`     | Auto-generated into system-wide configurations        |
+| **Create Custom Theme** | Add `.nix` palette in `lib/themes/`     | Auto-generated into system-wide configurations        |
 
 ---
 
@@ -184,7 +184,7 @@ All orchestration actions are executed from the repo root via `./setup.sh`:
 
 ## 💡 Philosophy
 
-- **Declarative Truth**: Identity defined in `lib/variables.nix`, colors in `lib/colorschemes/`. Zero duplication across modules.
+- **Declarative Truth**: Identity defined in `lib/variables.nix`, colors in `lib/themes/`. Zero duplication across modules.
 - **Runtime Over Rebuilds**: Anything that can reload at runtime (themes, wallpapers, shell modules) re-reads states dynamically.
 - **Safe State Transitions**: Dry builds gate rebuilds, installer verifies UEFI & UUID integrity, and destructive steps require manual verification.
 - **Keyboard Precision**: Keybinds, pickers, and workspace navigation map to short ergonomic chords defined in `variables.lua`.

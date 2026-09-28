@@ -4,6 +4,17 @@ local group = vim.api.nvim_create_augroup("UserAutocmds", {
 	clear = true,
 })
 
+-- Filetype detection
+-- Files under config/lsp/ are only loaded when vim.lsp.enable() names a
+-- server, so this cannot live there: "jsonl" is not an LSP server and the
+-- detection (and syntax/jsonl.vim with it) would never run.
+vim.filetype.add({
+	extension = {
+		jsonl = "jsonl",
+		ndjson = "jsonl",
+	},
+})
+
 -- Enable line numbers in normal editing windows
 vim.api.nvim_create_autocmd("BufWinEnter", {
 	group = group,

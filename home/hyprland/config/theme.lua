@@ -3,7 +3,9 @@
 -- Paths
 local home = os.getenv("HOME")
 local activeThemePath = home .. "/.config/sunflower/active-theme.lua"
-local fallbackThemePath = home .. "/.config/sunflower/themes/catppuccin-mocha.lua"
+-- Fallback to the default palette declared in lib/themes.nix and materialised
+-- by the theme generators as ~/.config/sunflower/default-theme.lua.
+local fallbackThemePath = home .. "/.config/sunflower/default-theme.lua"
 
 -- Load Active Theme
 local ok = false

@@ -56,8 +56,8 @@
                 apple-fonts.overlays.default
 
                 (final: prev: {
-                  zen-browser = zen-browser.packages.${final.system}.default;
-                  opencode = nixpkgs-unstable.legacyPackages.${final.system}.opencode;
+                  zen-browser = zen-browser.packages.${final.stdenv.hostPlatform.system}.default;
+                  opencode = nixpkgs-unstable.legacyPackages.${final.stdenv.hostPlatform.system}.opencode;
                 })
               ];
             }
@@ -70,12 +70,10 @@
             {
               home-manager.useGlobalPkgs = true;
               home-manager.useUserPackages = true;
-
               home-manager.extraSpecialArgs = {
                 inherit vars;
                 inherit inputs;
               };
-
               home-manager.users.${vars.user.username} = import ./home;
             }
           ];

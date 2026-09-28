@@ -4,7 +4,8 @@ let
   themeData = import ../../lib/themes.nix;
   themeNames = builtins.attrNames themeData.themes;
 
-  # Core generators:
+  defaultThemeId = themeData.global.activeTheme;
+
   # GTK + Kvantum + Base16 helpers
   generators = import ./generators.nix {
     inherit lib themeData themeNames;
@@ -81,6 +82,8 @@ in
   xdg.configFile = {
     "sunflower/themes.json".text = builtins.toJSON themeData;
     "sunflower/themes.list".text = themeList + "\n";
+    "sunflower/default-theme".text = defaultThemeId + "\n";
+    "sunflower/default-theme.lua" = data.luaThemeFiles.${defaultThemeId};
   }
   // generatedThemeFiles;
 

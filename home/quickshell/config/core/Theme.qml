@@ -27,9 +27,35 @@ QtObject {
         }
     }
 
+    // Default Theme ID
+    //
+    // Nix writes ~/.config/sunflower/default-theme from lib/themes.nix, so this
+    // always agrees with the palette Hyprland, kitty and tmux fall back to.
+
+    property var defaultThemeFile: FileView {
+        path: theme.sunflowerDirectory + "/default-theme"
+
+        blockLoading: true
+        printErrors: false
+    }
+
+    readonly property string defaultThemeId: {
+        const raw = theme.defaultThemeFile.loaded ? theme.defaultThemeFile.text() : "";
+        const trimmed = (raw || "").trim();
+
+        return trimmed.length > 0 ? trimmed : "sunflower";
+    }
+
     // Active Theme ID
 
-    readonly property string activeTheme: activeThemeFile.loaded ? activeThemeFile.text().trim() : "catppuccin"
+    readonly property string activeTheme: {
+        if (!activeThemeFile.loaded)
+            return theme.defaultThemeId;
+
+        const trimmed = activeThemeFile.text().trim();
+
+        return trimmed.length > 0 ? trimmed : theme.defaultThemeId;
+    }
 
     // Active Theme JSON
 
@@ -394,7 +420,6 @@ QtObject {
     readonly property int durOpen: 220
 
     readonly property int durClose: 150
-
 
     // Collapsing Bar
 

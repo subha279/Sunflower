@@ -7,7 +7,7 @@ local themePath = home .. "/.config/sunflower/active-theme.lua"
 local ok, theme = pcall(dofile, themePath)
 
 if not ok or not theme then
-	local fallback = home .. "/.config/sunflower/themes/catppuccin-mocha.lua"
+	local fallback = home .. "/.config/sunflower/default-theme.lua"
 
 	ok, theme = pcall(dofile, fallback)
 end

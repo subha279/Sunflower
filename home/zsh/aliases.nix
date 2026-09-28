@@ -4,7 +4,6 @@
   programs.zsh.shellAliases = {
 
     # Listing
-
     ls = "eza --icons --group-directories-first";
     ll = "eza -lah --icons --group-directories-first";
     la = "eza -a --icons --group-directories-first";
@@ -36,7 +35,7 @@
     gp = "git push";
     gpl = "git pull --ff-only";
 
-    # Devlopment
+    # Development
     nd = "nix develop -c zsh";
     ssh = "TERM=xterm-256color ssh";
     rebuild = "sudo nixos-rebuild switch --flake '.#sunflower'";
