@@ -20,9 +20,9 @@ hl.monitor({
 -- mode/position/scale must match PANEL_* in scripts/monitor.sh.
 hl.monitor({
 	output = "eDP-1",
-	mode = "preferred",
+	mode = "1920x1080@60.00800",
 	position = "auto",
-	scale = 1,
+	scale = 1.2,
 })
 
 -- Kernel switch name, identical on every ACPI laptop (see `hyprctl devices`)
