@@ -1,54 +1,74 @@
 {
-    "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
-    "logo": {
-        "source": "~/.config/fastfetch/logo/loli.icon",
-        "height": 6,
-        "padding": {
-            "top": 1,
-            "left": 3,
-            "right": 3
-        }
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+
+  "logo": {
+    "source": "~/.config/fastfetch/logo/loli.icon",
+    "height": 8,
+    "padding": {
+      "left": 2
     },
-    "display": {
-        "separator": "", // Uses a clean Nerd Font arrow instead of a plain colon
-        "key": {
-            "width": 13 // Perfectly aligns all keys horizontally
-        }
-    },
-    "modules": [
-        "break",
-        {
-            "type": "os",
-            "key": "    OS",
-            "keyColor": "red",
-            "format": "{2}"
-        },
-        {
-            "type": "packages",
-            "key": "   󰏗 Pkgs",
-            "keyColor": "green"
-        },
-        {
-            "type": "memory",
-            "key": "   󰍛 Memory",
-            "keyColor": "magenta"
-        },
-        {
-            "type": "disk",
-            "key": "   󰋊 Disk",
-            "keyColor": "green"
-        },
-        {
-            "type": "command",
-            "key": "   󱦟 OS Age",
-            "keyColor": "red",
-            "text": "birth_time=$(stat -c %W / 2>/dev/null || stat -f %B /); echo $(( ( $(date +%s) - birth_time ) / 86400 )) days"
-        },
-        {
-            "type": "uptime",
-            "key": "   󱫐 Uptime",
-            "keyColor": "magenta"
-        },
-        "break"
+    "color": {
+      "1": "\u001b[37m"
+    }
+  },
+
+  "display": {
+    "separator": "  ",
+    "constants": [
+      "\u001b[37m",
+      "\u001b[38;2;208;188;255m",
+      "\u001b[38;2;122;162;247m",
+      "\u001b[38;2;127;255;154m",
+      "\u001b[38;2;255;114;143m",
+      "\u001b[38;2;255;218;114m"
     ]
+  },
+
+  "modules": [
+    {
+      "type": "custom",
+      "key": "  ╭─ {$6}Sunflower{$1} ─╮"
+    },
+
+    {
+      "type": "os",
+      "key": "  │ {$2}{$1}  OS       │"
+    },
+
+    {
+      "type": "kernel",
+      "key": "  │ {$5}{$1}  Kernel   │"
+    },
+
+    {
+      "type": "packages",
+      "key": "  │ {$4}{$1}  Packages │"
+    },
+
+    {
+      "type": "memory",
+      "key": "  │ {$5}󰍛{$1}  Memory   │"
+    },
+
+    {
+      "type": "disk",
+      "key": "  │ {$6}󰋊{$1}  Disk     │"
+    },
+
+    {
+      "type": "uptime",
+      "key": "  │ {$3}󱫐{$1}  Uptime   │"
+    },
+
+    {
+      "type": "command",
+      "key": "  │ {$4}󱦟{$1}  OS Age   │",
+      "text": "birth_time=$(stat -c %W / 2>/dev/null || stat -f %B /); echo $(( ( $(date +%s) - birth_time ) / 86400 )) days"
+    },
+
+    {
+      "type": "custom",
+      "key": "  ╰─────────────╯"
+    }
+  ]
 }
