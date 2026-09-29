@@ -19,12 +19,6 @@
     zed-editor
     opencode
 
-    # Rust
-    rustc
-    cargo
-    rustfmt
-    clippy
-
     # Node / JavaScript
     nodejs
     pnpm

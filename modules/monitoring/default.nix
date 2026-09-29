@@ -5,7 +5,6 @@
 
     # Process Monitoring
     btop
-    htop
 
     # Network / I/O Monitoring
     iotop
