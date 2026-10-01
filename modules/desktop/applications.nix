@@ -53,9 +53,12 @@
     })
 
     ffmpeg
-    libreoffice-fresh
+    libreoffice
     gimp
     blender
+
+    # Text Editor
+    vis
 
   ];
 }

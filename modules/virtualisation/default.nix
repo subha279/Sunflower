@@ -15,12 +15,13 @@ in
       package = pkgs.qemu_kvm;
       runAsRoot = true;
       swtpm.enable = true;
+
+      # VirtIO-FS support
+      vhostUserPackages = [
+        pkgs.virtiofsd
+      ];
     };
   };
-
-  environment.systemPackages = [
-    pkgs.virtiofsd
-  ];
 
   # Virt-Manager
   programs.virt-manager.enable = true;
