@@ -56,9 +56,5 @@
     libreoffice
     gimp
     blender
-
-    # Text Editor
-    vis
-
   ];
 }
