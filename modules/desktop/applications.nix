@@ -57,4 +57,5 @@
     gimp
     blender
   ];
+  programs.nix-ld.enable = true;
 }
