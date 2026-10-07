@@ -82,7 +82,6 @@ cd ~/Sunflower
 > **Important installation notes:**
 >
 > - **`git` is optional.** Clone it, download it, or copy the directory — the installer, the rebuilds and the updates all work without a `.git` directory. When one is present it is staged so the flake sees every file, and dropped automatically if the configuration only evaluates as a plain path.
-> - **A failed install cleans up after itself.** Just run `./setup.sh` again: the installer releases every mount and swap left on the target by the previous attempt (the old `sudo swapoff -a` / `sudo umount -R /mnt` dance is done for you) and re-checks the disk before erasing anything.
 > - **The configuration is validated before the disk is touched.** A run whose flake does not evaluate is cancelled with nothing changed. Check it anywhere, changing nothing, with `./setup.sh validate`.
 > - **Identity is validated up front.** Hostname (RFC 1123, lowercased), username (no reserved names), email and timezone are checked as you answer them — not after the disk is gone.
 > - **Large download size:** Review the package list before installing. The total size is currently a massive **7.5 GB**, as it includes extra packages you might not need. (A fix to optimize this size is coming soon). The installer keeps 10 GiB free for the build and refuses to start when the disk cannot hold it.
@@ -179,15 +178,6 @@ All orchestration actions are executed from the repo root via `./setup.sh`:
 
 > [!TIP]
 > **Recommended Workflow**: Always execute `./setup.sh check` → `./setup.sh dry` → `./setup.sh rebuild` when testing configuration changes.
-
----
-
-## 💡 Philosophy
-
-- **Declarative Truth**: Identity defined in `lib/variables.nix`, colors in `lib/themes/`. Zero duplication across modules.
-- **Runtime Over Rebuilds**: Anything that can reload at runtime (themes, wallpapers, shell modules) re-reads states dynamically.
-- **Safe State Transitions**: Dry builds gate rebuilds, installer verifies UEFI & UUID integrity, and destructive steps require manual verification.
-- **Keyboard Precision**: Keybinds, pickers, and workspace navigation map to short ergonomic chords defined in `variables.lua`.
 
 ---
 
