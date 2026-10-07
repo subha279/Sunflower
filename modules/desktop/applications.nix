@@ -10,6 +10,9 @@
     shared-mime-info
     ffmpegthumbnailer
 
+    # Music Player
+    tauon
+
     # Archives
     p7zip
     unar
