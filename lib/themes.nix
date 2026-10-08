@@ -23,8 +23,8 @@ let
 
     # Icons
     icons = {
-      name = "Tela-circle-dark";
-      package = "tela-circle-icon-theme";
+      name = "Papirus-Dark";
+      package = "papirus-icon-theme";
     };
 
     # Cursor
