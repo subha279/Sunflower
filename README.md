@@ -190,6 +190,20 @@ All orchestration actions are executed from the repo root via `./setup.sh`:
 
 ---
 
+
+## ☕ Support
+
+If you find useful, consider supporting its development.
+Every contribution helps me improve the project and build new features.
+
+<a href="https://buymeacoffee.com/subha279">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-green.png"
+       alt="Buy Me a Coffee"
+       width="180">
+</a>
+
+---
+
 <div align="center">
 
 <sub>🌻 Sunflower: Plant once, bloom everywhere.</sub>

@@ -6,6 +6,8 @@
     scrcpy
     android-tools
 
+    cloudflared
+
     # Build / compilation
     gcc
     clang
