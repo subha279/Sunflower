@@ -18,8 +18,6 @@
     # Development utilities
     git-lfs
     shellcheck
-    zed-editor
-    opencode
 
     # Node / JavaScript
     nodejs
@@ -27,6 +25,9 @@
 
     # Python
     python3
+
+    # AI
+    opencode
 
     # Containers
     podman

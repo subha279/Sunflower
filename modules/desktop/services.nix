@@ -20,4 +20,6 @@
   programs.xfconf.enable = true;
   # Thumbnails.
   services.tumbler.enable = true;
+  # Ollama
+  services.ollama.enable = true;
 }
